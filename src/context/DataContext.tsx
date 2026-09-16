@@ -329,9 +329,14 @@ export function DataProvider({ children }: { children: React.ReactNode }) {
           counts: { customers: data.customers?.length, products: data.products?.length, sales: data.sales?.length, payments: data.payments?.length, debts: data.debts?.length },
         });
 
-        if (!data.customers && !data.products) {
-          LOG.sync("mount: GitHub returned empty — keeping local data");
+        if (!data.sha) {
+          // sha=null means no file exists on GitHub yet (new account or after failed clearAllData)
+          // Keep local data and push it to GitHub to initialize the file
+          LOG.sync("mount: no GitHub file yet — keeping local data and initializing GitHub");
           setIsLoading(false);
+          if (mutationSeq.current > 0) {
+            void syncToDriveInternal();
+          }
           return;
         }
 

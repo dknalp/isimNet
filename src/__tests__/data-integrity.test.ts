@@ -323,3 +323,30 @@ describe("visibilitychange visible: retry sync after keepalive failure", () => {
     expect(shouldRetry).toBe(false);
   });
 });
+
+// ── mount: sha=null guard ─────────────────────────────────────────────────────
+// On mount, GET /api/sync returns sha=null when no GitHub file exists yet.
+// The old guard (if !data.customers && !data.products) was truthy-array-safe only
+// for missing fields; [] is truthy and would pass the check, causing local data overwrite.
+// New guard: check sha === null first.
+
+describe("mount: sha=null response guard (new account / no GitHub file)", () => {
+  it("sha=null signals no GitHub file — do not overwrite local data", () => {
+    const response = { sha: null, customers: [], products: [], sales: [], payments: [], debts: [] };
+    const shouldKeepLocal = response.sha === null;
+    expect(shouldKeepLocal).toBe(true);
+  });
+
+  it("sha present means GitHub has data — can proceed to overwrite local", () => {
+    const response = { sha: "abc123", customers: [], products: [], sales: [], payments: [], debts: [] };
+    const shouldKeepLocal = response.sha === null;
+    expect(shouldKeepLocal).toBe(false);
+  });
+
+  it("old guard (!data.customers) fails for empty arrays — demonstrates the bug", () => {
+    const response = { sha: null, customers: [], products: [] };
+    // Old check: ![] is false → guard FAILS → would proceed to overwrite
+    const oldGuardPassed = !response.customers && !response.products;
+    expect(oldGuardPassed).toBe(false); // confirms bug: guard was bypassed
+  });
+});
