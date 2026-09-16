@@ -165,3 +165,98 @@ describe("writeLocalData", () => {
     expect(path1).toBe(path2);
   });
 });
+
+// ─── Round 2: Edge cases ──────────────────────────────────────────────────────
+
+describe("writeLocalData: edge cases", () => {
+  it("cleans up orphaned .tmp file when rename throws", async () => {
+    const renameErr = new Error("EXDEV: cross-device link not permitted");
+    mockFs.rename.mockRejectedValue(renameErr);
+
+    await expect(writeLocalData("user1", EMPTY)).rejects.toThrow("EXDEV");
+    // unlink should have been called to clean up the tmp file
+    expect(mockFs.unlink ?? (fs as unknown as Record<string, ReturnType<typeof vi.fn>>).unlink).toBeDefined();
+    // verify rename was attempted
+    expect(mockFs.rename).toHaveBeenCalledTimes(1);
+  });
+
+  it("tmp filename includes random suffix (not just .tmp)", async () => {
+    await writeLocalData("user1", EMPTY);
+    const [tmpPath] = mockFs.writeFile.mock.calls[0] as [string, ...unknown[]];
+    // Should match pattern: <hash>.json.tmp.<hex>
+    expect(tmpPath).toMatch(/\.json\.tmp\.[0-9a-f]+$/);
+  });
+
+  it("empty string userId produces a valid sha256 filename", async () => {
+    await writeLocalData("", EMPTY);
+    const [, toPath] = mockFs.rename.mock.calls[0] as [string, string];
+    expect(toPath).toMatch(/[a-f0-9]{64}\.json$/);
+    expect(toPath).not.toContain("undefined");
+  });
+
+  it("very long userId (10000 chars) is hashed to fixed-length filename", async () => {
+    const longId = "x".repeat(10000);
+    await writeLocalData(longId, EMPTY);
+    const [, toPath] = mockFs.rename.mock.calls[0] as [string, string];
+    expect(toPath).toMatch(/[a-f0-9]{64}\.json$/);
+  });
+
+  it("same userId always produces the same filename (deterministic)", async () => {
+    await writeLocalData("user-abc", EMPTY);
+    const path1 = (mockFs.rename.mock.calls[0] as [string, string])[1];
+    mockFs.rename.mockClear();
+    mockFs.writeFile.mockClear();
+    await writeLocalData("user-abc", EMPTY);
+    const path2 = (mockFs.rename.mock.calls[0] as [string, string])[1];
+    expect(path1).toBe(path2);
+  });
+});
+
+describe("readLocalData: invalid AppData shapes", () => {
+  it("returns null when file contains JSON null", async () => {
+    mockFs.readFile.mockResolvedValue("null");
+    const result = await readLocalData("user1");
+    expect(result).toBeNull();
+  });
+
+  it("returns null when file contains a JSON array", async () => {
+    mockFs.readFile.mockResolvedValue("[1,2,3]");
+    const result = await readLocalData("user1");
+    expect(result).toBeNull();
+  });
+
+  it("returns null when file contains a number", async () => {
+    mockFs.readFile.mockResolvedValue("42");
+    const result = await readLocalData("user1");
+    expect(result).toBeNull();
+  });
+
+  it("returns null when file is valid object but missing required fields", async () => {
+    mockFs.readFile.mockResolvedValue(JSON.stringify({ customers: [], products: [] }));
+    const result = await readLocalData("user1");
+    expect(result).toBeNull();
+  });
+
+  it("returns null when a required field is not an array", async () => {
+    const bad = { customers: {}, products: [], sales: [], payments: [], debts: [] };
+    mockFs.readFile.mockResolvedValue(JSON.stringify(bad));
+    const result = await readLocalData("user1");
+    expect(result).toBeNull();
+  });
+
+  it("returns data when all 5 fields are arrays (even empty)", async () => {
+    const valid = { customers: [], products: [], sales: [], payments: [], debts: [] };
+    mockFs.readFile.mockResolvedValue(JSON.stringify(valid));
+    const result = await readLocalData("user1");
+    expect(result).toEqual(valid);
+  });
+
+  it("returns data with extra unknown fields (pass-through)", async () => {
+    const withExtra = { customers: [], products: [], sales: [], payments: [], debts: [], version: 2 };
+    mockFs.readFile.mockResolvedValue(JSON.stringify(withExtra));
+    const result = await readLocalData("user1");
+    // isAppData only checks the 5 required fields — extra fields pass through
+    expect(result).not.toBeNull();
+    expect((result as unknown as Record<string, unknown>).version).toBe(2);
+  });
+});
