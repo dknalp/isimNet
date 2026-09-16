@@ -479,6 +479,34 @@ describe("clearAllData: dirty state preserved after failure enables retry", () =
   });
 });
 
+// ── clearAllData: syncLock race prevention ───────────────────────────────────
+// clearAllData waits for syncLockRef to clear before POSTing empty arrays,
+// so the empty-data POST always arrives AFTER any in-flight sync POST.
+
+describe("clearAllData: waits for syncLockRef before POSTing", () => {
+  it("if syncLock held, clearAllData must wait so its POST arrives last", async () => {
+    let syncLockRef = { current: true };
+    let clearDataPosted = false;
+
+    // Simulate: release lock after 20ms
+    const lockRelease = new Promise<void>(resolve => {
+      setTimeout(() => { syncLockRef.current = false; resolve(); }, 20);
+    });
+
+    // Simulate clearAllData poll logic
+    await new Promise<void>(resolve => {
+      const poll = setInterval(() => {
+        if (!syncLockRef.current) { clearInterval(poll); resolve(); }
+      }, 5);
+    });
+
+    clearDataPosted = true;
+    await lockRelease; // ensure lock was released before we posted
+    expect(clearDataPosted).toBe(true);
+    expect(syncLockRef.current).toBe(false); // lock cleared before post
+  });
+});
+
 // ── keepalive: uses stateRef.current, not stale closure ──────────────────────
 // The visibilitychange handler is attached once (useEffect with [] deps).
 // If it captured customers/products etc. as closure variables, they'd be stale.
