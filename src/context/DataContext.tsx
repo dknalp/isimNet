@@ -11,16 +11,21 @@ import {
 } from "@/lib/customers";
 import { Product, NewProductFormData } from "@/lib/products";
 
-// ── LocalStorage keys ─────────────────────────────────────────────────────────
-const LS = {
-  customers:    "isimnet_customers",
-  products:     "isimnet_products",
-  sales:        "isimnet_sales",
-  payments:     "isimnet_payments",
-  debts:        "isimnet_debts",
-  lastSync:     "isimnet_last_sync",
-  lastMutation: "isimnet_last_mutation",
-};
+// ── LocalStorage keys (namespaced per user to prevent cross-user data leakage) ──
+function makeLS(uid: string) {
+  const p = `isimnet_${uid}`;
+  return {
+    customers:    `${p}_customers`,
+    products:     `${p}_products`,
+    sales:        `${p}_sales`,
+    payments:     `${p}_payments`,
+    debts:        `${p}_debts`,
+    lastSync:     `${p}_last_sync`,
+    lastMutation: `${p}_last_mutation`,
+  };
+}
+// Fallback for anonymous/pre-auth reads (returns keys that will have no data)
+const LS_ANON = makeLS("anon");
 
 // ── Structured logger ─────────────────────────────────────────────────────────
 const LOG = {
@@ -118,12 +123,14 @@ const DataContext = createContext<DataContextValue | null>(null);
 // ── Provider ──────────────────────────────────────────────────────────────────
 export function DataProvider({ children }: { children: React.ReactNode }) {
   const { data: session, status } = useSession();
+  // LS keys are user-scoped — only safe to use once session.userId is known
+  const LS = session?.userId ? makeLS(session.userId) : LS_ANON;
 
-  const [customers, setCustomers] = useState<Customer[]>(() => lsRead<Customer>(LS.customers) ?? []);
-  const [products,  setProducts]  = useState<Product[]>(()  => lsRead<Product>(LS.products)   ?? []);
-  const [sales,     setSales]     = useState<Sale[]>(()     => lsRead<Sale>(LS.sales)          ?? []);
-  const [payments,  setPayments]  = useState<Payment[]>(()  => lsRead<Payment>(LS.payments)    ?? []);
-  const [debts,     setDebts]     = useState<Debt[]>(()     => lsRead<Debt>(LS.debts)          ?? []);
+  const [customers, setCustomers] = useState<Customer[]>([]);
+  const [products,  setProducts]  = useState<Product[]>([]);
+  const [sales,     setSales]     = useState<Sale[]>([]);
+  const [payments,  setPayments]  = useState<Payment[]>([]);
+  const [debts,     setDebts]     = useState<Debt[]>([]);
 
   const [isLoading,    setIsLoading]    = useState(true);
   const [isSyncing,    setIsSyncing]    = useState(false);
@@ -303,16 +310,33 @@ export function DataProvider({ children }: { children: React.ReactNode }) {
   useEffect(() => {
     if (status !== "authenticated" || !session?.userId) {
       if (status === "unauthenticated") {
+        // Clear all known LS data on sign-out so the next user starts clean
+        try {
+          Object.keys(localStorage).filter(k => k.startsWith("isimnet_")).forEach(k => localStorage.removeItem(k));
+        } catch { /* */ }
+        setCustomers([]); setProducts([]); setSales([]); setPayments([]); setDebts([]);
         setIsLoading(false);
-        LOG.info("mount: unauthenticated, using local data only");
+        LOG.info("mount: unauthenticated — cleared localStorage");
       }
       return;
     }
 
-    const hasLocal = lsRead(LS.customers) !== null || lsRead(LS.products) !== null;
+    // Fast-path: show user's own cached data immediately (user-scoped keys prevent cross-user leakage)
+    const localCustomers = lsRead<Customer>(LS.customers);
+    const localProducts  = lsRead<Product>(LS.products);
+    if (localCustomers) { setCustomers(localCustomers); }
+    if (localProducts)  { setProducts(localProducts); }
+    const localSales    = lsRead<Sale>(LS.sales);
+    const localPayments = lsRead<Payment>(LS.payments);
+    const localDebts    = lsRead<Debt>(LS.debts);
+    if (localSales)    setSales(localSales);
+    if (localPayments) setPayments(localPayments);
+    if (localDebts)    setDebts(localDebts);
+
+    const hasLocal = localCustomers !== null || localProducts !== null;
     if (!hasLocal) setIsLoading(true);
 
-    LOG.sync("mount: fetching from GitHub");
+    LOG.sync("mount: fetching from server");
 
     fetch("/api/sync")
       .then(async res => {
