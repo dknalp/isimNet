@@ -27,7 +27,7 @@ export default function SenkronizasyonPage() {
   const { data: session } = useSession();
   const {
     customers, products, sales, payments, debts,
-    isSyncing, lastSyncTime,
+    isSyncing, lastSyncTime, syncError,
     syncToDrive, restoreFromDrive,
   } = useData();
 
@@ -146,6 +146,16 @@ export default function SenkronizasyonPage() {
             ))}
           </div>
         </div>
+
+        {/* Persistent sync error from context (auto-sync failures) */}
+        {syncError && syncStatus !== "error" && (
+          <div className="mb-4 flex items-start gap-2.5 bg-orange-50 border border-orange-100 rounded-2xl px-4 py-3">
+            <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={2} stroke="#EA580C" className="w-5 h-5 shrink-0 mt-0.5">
+              <path strokeLinecap="round" strokeLinejoin="round" d="M12 9v3.75m9-.75a9 9 0 1 1-18 0 9 9 0 0 1 18 0Zm-9 3.75h.008v.008H12v-.008Z" />
+            </svg>
+            <span className="text-sm text-orange-700 font-medium">{syncError}</span>
+          </div>
+        )}
 
         {/* Status messages */}
         {syncStatus === "success" && (
