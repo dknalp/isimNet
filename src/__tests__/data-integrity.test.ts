@@ -350,3 +350,56 @@ describe("mount: sha=null response guard (new account / no GitHub file)", () => 
     expect(oldGuardPassed).toBe(false); // confirms bug: guard was bypassed
   });
 });
+
+// ── syncLock: prevent concurrent auto-syncs ───────────────────────────────────
+// If two sync triggers fire simultaneously (interval + visibility hide),
+// both would send the same snapshot to GitHub. The second gets a 409 conflict
+// and retries with a fresh SHA — wasting an API call and causing a duplicate write.
+// syncLockRef prevents the second from starting while the first is in flight.
+
+describe("syncLock: concurrent sync prevention", () => {
+  it("lock prevents second sync from starting while first is in flight", () => {
+    let syncLock = false;
+    let syncCount = 0;
+
+    function trySync() {
+      if (syncLock) return false;
+      syncLock = true;
+      syncCount++;
+      return true;
+    }
+
+    function releaseSync() { syncLock = false; }
+
+    // First sync starts
+    expect(trySync()).toBe(true);
+    expect(syncCount).toBe(1);
+
+    // Second sync attempt while first is in flight — blocked
+    expect(trySync()).toBe(false);
+    expect(syncCount).toBe(1);
+
+    // First sync completes, releases lock
+    releaseSync();
+
+    // Third sync can now start
+    expect(trySync()).toBe(true);
+    expect(syncCount).toBe(2);
+  });
+
+  it("lock is released even after sync failure", () => {
+    let syncLock = false;
+
+    function trySync() {
+      if (syncLock) return false;
+      syncLock = true;
+      return true;
+    }
+
+    expect(trySync()).toBe(true);
+    // Simulate failure in finally block
+    syncLock = false;
+    // Can sync again
+    expect(trySync()).toBe(true);
+  });
+});

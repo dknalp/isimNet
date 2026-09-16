@@ -1,136 +1,235 @@
-# Plan: Replace GitHub Storage with Local JSON DB
+# Plan: Local JSON DB (lowdb) as Primary + GitHub as Cloud Backup
 
-## The honest answer: does it make sense?
+## Decision: NOT lowdb. Use atomic file writes directly.
 
-Yes, but only if you run this app on your own server (VPS, home server, or self-hosted). It does NOT make sense on Vercel, because Vercel is serverless — each function invocation is stateless and has no persistent local filesystem. Writing a file in a Vercel function and reading it back a second later will fail silently (files land in /tmp, are ephemeral, and not shared across instances).
+Research shows lowdb v7 is:
+- Last published 3 years ago (abandoned)
+- Pure ESM — causes Webpack issues with Next.js
+- No transactions, no ACID guarantees
+- Just a thin wrapper over JSON.parse/fs.writeFile anyway
 
-So this plan has two branches. You need to pick one before any code is written.
+**Better choice: raw `node:fs/promises` with atomic write (write-to-tmp → rename).** This is what lowdb does internally, but without the baggage. We already wrote a version of this in the plan last time. Zero deps, zero ESM issues, total control.
+
+For schema-level queries we don't need SQL — our data model is flat arrays with ID lookups, exactly what the existing in-memory operations already do.
 
 ---
 
-## Branch A: Self-hosted (Node.js / Docker on VPS)
+## Architecture After Migration
 
-You run `next start` on a real server. Files persist. This is the right choice if you want simplicity, full control, and no GitHub dependency.
+```
+User browser
+  └── localStorage (instant UI)
+  └── DataContext (state, CRUD, dirty tracking)
+        └── POST /api/sync  ──→  localdb.ts  ──→  data/{userId}.json   ← PRIMARY
+        └── POST /api/backup ──→ github.ts   ──→  GitHub repo           ← CLOUD BACKUP (on demand + daily)
+        └── GET  /api/sync  ──→  localdb.ts  ──→  reads local file
+        └── GET  /api/backup ──→ github.ts   ──→  reads GitHub (restore only)
+```
 
-### What changes
+Key principle: **local file is always the source of truth. GitHub is a backup only** — user can push to it manually or schedule a daily export. Restore from GitHub is an explicit user action.
 
-| Layer | Before | After |
-|---|---|---|
-| Storage | GitHub Contents API (`users/{id}/data.json`) | Local FS (`data/{userId}.json`) |
-| Conflict/SHA | SHA-based optimistic locking + 409 retry | File-level mutex (write lock per userId) |
-| Auth | Same (Google OAuth via NextAuth) | Same — unchanged |
-| DataContext | Same — unchanged | Same — unchanged |
-| sync route | Calls `github.ts` | Calls new `localdb.ts` |
-| Env vars | `GITHUB_TOKEN`, `GITHUB_REPO_OWNER`, etc. | `DATA_DIR` (path to JSON storage directory) |
+---
 
-### New file: `src/lib/localdb.ts`
+## Files Changed
+
+### New
+| File | What |
+|---|---|
+| `src/lib/localdb.ts` | Atomic read/write using `node:fs/promises`. Replaces `github.ts` as primary. |
+| `src/app/api/backup/route.ts` | New route — GET reads GitHub (restore), POST pushes to GitHub (manual/scheduled backup). |
+| `Dockerfile` | Node 20 Alpine, exposes 3000, volume `/app/data` |
+| `docker-compose.yml` | Single-service compose with DATA_DIR volume |
+
+### Modified
+| File | What changes |
+|---|---|
+| `src/app/api/sync/route.ts` | Import `localdb` instead of `github`. Remove `sha` from response — local files don't need it. |
+| `src/context/DataContext.tsx` | Remove `shaRef`, remove `sha` from POST body. Add `backupToGitHub()` and `restoreFromGitHub()` in place of current `syncToDrive`/`restoreFromDrive`. |
+| `src/app/dashboard/senkronizasyon/page.tsx` | Rename UI labels: "Senkronizasyon" → "Yedekleme". Add "GitHub'a Yedekle" + "GitHub'dan Geri Yükle" buttons. |
+| `next.config.ts` | Add `serverExternalPackages: []` (nothing needed since we use raw fs, not lowdb) |
+| `.env.example` | Replace GITHUB_* sync vars with `DATA_DIR`. Keep GITHUB_* for backup feature. |
+
+### Deleted
+| File | Reason |
+|---|---|
+| `src/lib/github.ts` | Responsibilities split: localdb.ts (primary) + backup route (cloud backup). |
+
+---
+
+## `src/lib/localdb.ts` — Core design
 
 ```ts
-import fs from "fs/promises";
-import path from "path";
+import fs from "node:fs/promises";
+import path from "node:path";
+import crypto from "node:crypto";
 
 const DATA_DIR = process.env.DATA_DIR ?? path.join(process.cwd(), "data");
 
-function userPath(userId: string) {
-  // userId goes through a safe hash to prevent path traversal
-  return path.join(DATA_DIR, `${safeId(userId)}.json`);
+// Prevent path traversal — hash userId into a safe filename
+function safeFilename(userId: string): string {
+  return crypto.createHash("sha256").update(userId).digest("hex") + ".json";
 }
 
-export async function readDataFile(userId): Promise<{ data: AppData | null }>
-export async function writeDataFile(userId, data: AppData): Promise<void>
+function userPath(userId: string) {
+  return path.join(DATA_DIR, safeFilename(userId));
+}
+
+export async function readDataFile(userId: string): Promise<AppData | null> {
+  try {
+    const raw = await fs.readFile(userPath(userId), "utf-8");
+    return JSON.parse(raw) as AppData;
+  } catch (e: unknown) {
+    if ((e as NodeJS.ErrnoException).code === "ENOENT") return null;
+    throw e;  // unexpected error — let caller handle
+  }
+}
+
+export async function writeDataFile(userId: string, data: AppData): Promise<void> {
+  await fs.mkdir(DATA_DIR, { recursive: true });
+  const target = userPath(userId);
+  const tmp    = target + ".tmp";
+  await fs.writeFile(tmp, JSON.stringify(data));
+  await fs.rename(tmp, target);  // atomic on Linux/macOS
+}
 ```
 
-No SHA needed — the file mutex replaces optimistic locking. Write is atomic via write-to-temp + rename (avoids partial writes).
-
-### Write atomicity (replaces SHA/409 dance)
-
-```
-1. Write to data/{userId}.tmp
-2. fs.rename(tmp → data/{userId}.json)   ← atomic on Linux
-```
-
-`rename` is atomic at the OS level. Two concurrent writes: one wins, one gets ENOENT on the rename — retry. Much simpler than the current GitHub SHA conflict loop.
-
-### Migration path for existing users
-
-On first read: if `data/{userId}.json` doesn't exist, return empty. Users re-sync manually (Senkronizasyon page → "GitHub'dan geri yükle") or you write a one-time migration script that reads GitHub and writes local files.
-
-### Deployment change
-
-- Vercel → out. Use Railway, Fly.io, Render, or a plain VPS with Docker.
-- `Dockerfile` needed (Next.js + volume mount for `/data`).
-- No more `GITHUB_TOKEN`, `GITHUB_REPO_OWNER`, `GITHUB_REPO_NAME`, `GITHUB_BRANCH`.
-- Add: `DATA_DIR=/data` env var.
-
-### Effort estimate
-
-- `src/lib/localdb.ts` — new file, ~80 lines
-- `src/app/api/sync/route.ts` — swap import from `github` → `localdb`, remove `sha` field
-- `src/context/DataContext.tsx` — remove `sha` from sync calls (minor)
-- `Dockerfile` + `docker-compose.yml` — new files
-- Tests — update mocks to mock `fs` instead of `fetch`
-- **Total: 2–3 days**
+No SHA. No retry logic. No base64. No network. Atomic by OS guarantee.
 
 ---
 
-## Branch B: Stay on Vercel, swap GitHub for a real DB
+## `src/app/api/sync/route.ts` — After
 
-Keep Vercel serverless. Replace GitHub with a proper cloud database. Best options for this app's scale:
+GET and POST stay the same shape — DataContext doesn't need to change its call pattern.
+Only change: remove `sha` from GET response and POST body. No sha validation needed.
 
-| Option | Pros | Cons |
-|---|---|---|
-| **Vercel KV (Redis)** | Zero config, same dashboard, JSON native | Paid after free tier, Redis is KV not relational |
-| **Turso (libSQL/SQLite)** | SQLite semantics, free tier generous, edge-native | Needs schema, migrations |
-| **PlanetScale / Neon (Postgres)** | Full relational power | Overkill for this app size, schema complexity |
-| **Vercel Blob** | Like GitHub but official, no SHA games | Still blob storage, same eventual-consistency issues |
+```ts
+// GET: return data, no sha
+return NextResponse.json({ ...data });  // no sha field
 
-**Recommended for Vercel: Turso.** SQLite edge DB. Your data model maps 1:1 to tables. No SHA conflict games — SQL transactions handle concurrency. Free tier covers thousands of users.
-
-Schema:
-```sql
-CREATE TABLE app_data (
-  user_id TEXT PRIMARY KEY,
-  data    TEXT NOT NULL,         -- JSON blob (same AppData shape)
-  updated_at INTEGER NOT NULL    -- unix ms
-);
+// POST: write and return ok
+await writeDataFile(session.userId, data);
+return NextResponse.json({ ok: true });  // no sha field
 ```
 
-Single row per user, JSON column. Reads and writes are single SQL statements. Atomic by default. No migration complexity. Can add columns later.
+---
 
-Effort: 1–2 days (Turso client install, new `db.ts`, route update, drop `github.ts`).
+## `src/app/api/backup/route.ts` — New
+
+```ts
+// GET  → read from GitHub (for restore)
+// POST → write to GitHub (manual backup)
+```
+
+This is exactly what `src/lib/github.ts` does today — moved to a dedicated backup route. The existing `readOrMigrateDataFile` / `writeDataFile` from github.ts become the backup layer. Migration logic (legacy files → data.json) can be kept or dropped — up to you.
 
 ---
 
-## What DOESN'T change regardless of branch
+## DataContext changes (minimal)
 
-- `DataContext.tsx` — localStorage + sync logic stays identical. The sync route is the only seam.
-- Auth — unchanged.
-- All UI components — unchanged.
-- The `AppData` type interface — unchanged.
-- Tests for business logic — unchanged.
+Remove:
+- `shaRef` (no more SHA)
+- `sha: currentSha` from POST body
+- `json.sha` check in sync response handler
 
-The entire swap is isolated to:
-1. `src/lib/github.ts` → replaced
-2. `src/app/api/sync/route.ts` → minor update (remove sha field)
-3. `src/context/DataContext.tsx` → remove sha from POST body (3 lines)
-4. Env vars
+Rename/repurpose:
+- `syncToDrive()` → stays but calls `/api/sync` (local) — already done
+- `restoreFromDrive()` → calls `/api/backup` GET — just URL change
+- Add `backupToGitHub()` → calls `/api/backup` POST
 
----
-
-## My recommendation
-
-**If you have a VPS or are willing to run Docker → Branch A (local JSON).** Simplest possible backend. No external dependencies. Works offline. No rate limits. No tokens to manage.
-
-**If you want to stay on Vercel → Branch B with Turso.** Solves the same problems GitHub caused (rate limits, SHA conflicts, base64 overhead) cleanly, stays serverless.
-
-**Don't use Vercel + local JSON.** Serverless + local filesystem = data loss.
+Total lines changed in DataContext: ~15.
 
 ---
 
-## Decision needed before implementation starts
+## Migration for existing users
 
-Which hosting model are you on or planning for?
-- [ ] Self-hosted (VPS / Docker / home server) → Branch A
-- [ ] Vercel (or other serverless) → Branch B, pick DB
+Users already have data in GitHub. On first boot of the new version:
+1. Local file doesn't exist → GET /api/sync returns empty
+2. User goes to Senkronizasyon page → clicks "GitHub'dan Geri Yükle"
+3. App calls GET /api/backup → reads GitHub → writes to local file → loads into DataContext
+4. Done. Local file is now the source of truth.
 
-Answer this and I'll start the implementation immediately.
+No automatic migration needed. The restore flow already exists — we just retarget it.
+
+---
+
+## Docker deployment
+
+```dockerfile
+FROM node:20-alpine AS builder
+WORKDIR /app
+COPY . .
+RUN npm ci && npm run build
+
+FROM node:20-alpine AS runner
+WORKDIR /app
+COPY --from=builder /app/.next/standalone ./
+COPY --from=builder /app/.next/static ./.next/static
+COPY --from=builder /app/public ./public
+
+ENV DATA_DIR=/data
+VOLUME ["/data"]
+EXPOSE 3000
+CMD ["node", "server.js"]
+```
+
+```yaml
+# docker-compose.yml
+services:
+  app:
+    build: .
+    ports:
+      - "3000:3000"
+    volumes:
+      - isimnet_data:/data
+    env_file: .env
+volumes:
+  isimnet_data:
+```
+
+---
+
+## Env vars after migration
+
+```
+# Keep (auth)
+GOOGLE_CLIENT_ID
+GOOGLE_CLIENT_SECRET
+AUTH_SECRET
+NEXTAUTH_URL
+
+# New (primary storage)
+DATA_DIR=/data
+
+# Keep (cloud backup only — optional, can be left unset to disable backup)
+GITHUB_TOKEN
+GITHUB_REPO_OWNER
+GITHUB_REPO_NAME
+GITHUB_BRANCH
+```
+
+If GITHUB_* vars are not set, backup buttons are disabled in the UI with a tooltip.
+
+---
+
+## Implementation order
+
+1. `src/lib/localdb.ts` — new file, ~50 lines
+2. `src/app/api/sync/route.ts` — swap import, remove sha (~10 line change)
+3. `src/app/api/backup/route.ts` — new file, moves github logic here (~60 lines)
+4. `src/context/DataContext.tsx` — remove shaRef + sha from POST, add backupToGitHub (~15 line change)
+5. `src/app/dashboard/senkronizasyon/page.tsx` — UI update for backup vs sync labels
+6. `Dockerfile` + `docker-compose.yml` — new files
+7. Tests — update sync-route.test.ts (remove sha assertions), add localdb.test.ts
+8. Delete `src/lib/github.ts` — move to backup route
+
+**Total estimated effort: 1.5–2 days**
+
+---
+
+## Risk: nothing
+
+- DataContext call pattern unchanged (same /api/sync GET/POST)
+- Auth unchanged
+- UI unchanged except Senkronizasyon page labels
+- GitHub integration preserved as backup — users don't lose existing cloud data
+

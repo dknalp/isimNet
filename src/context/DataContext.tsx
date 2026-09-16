@@ -239,6 +239,11 @@ export function DataProvider({ children }: { children: React.ReactNode }) {
       LOG.sync("syncToDriveInternal: no dirty data, skip");
       return;
     }
+    if (syncLockRef.current) {
+      LOG.sync("syncToDriveInternal: sync already in flight, skip");
+      return;
+    }
+    syncLockRef.current = true;
 
     // Capture seq BEFORE await — mutations that arrive mid-flight stay dirty
     const seqAtStart = mutationSeq.current;
@@ -297,6 +302,8 @@ export function DataProvider({ children }: { children: React.ReactNode }) {
       LOG.error("syncToDriveInternal: network error", e);
       setSyncError("Ağ hatası — verileriniz cihazda güvende, bağlantı gelince otomatik sync denenecek.");
       // P0-FIX: do NOT update sha or syncedSeq
+    } finally {
+      syncLockRef.current = false;
     }
   }, []);
 
