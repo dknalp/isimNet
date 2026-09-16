@@ -53,18 +53,36 @@ describe("P0-A: lsWrite quota error surfacing", () => {
   });
 
   it("returns false when localStorage.setItem throws (simulated quota)", () => {
-    const original = localStorage.setItem.bind(localStorage);
-    localStorage.setItem = () => { throw new DOMException("QuotaExceededError"); };
-    const ok = lsWriteSafe("test_key", [{ id: "1" }]);
-    localStorage.setItem = original;
-    expect(ok).toBe(false);
+    // happy-dom localStorage.setItem is non-writable; use Object.defineProperty
+    const originalDescriptor = Object.getOwnPropertyDescriptor(Object.getPrototypeOf(localStorage), "setItem") ??
+      Object.getOwnPropertyDescriptor(localStorage, "setItem");
+    Object.defineProperty(localStorage, "setItem", {
+      configurable: true,
+      writable: true,
+      value: () => { throw new DOMException("QuotaExceededError"); },
+    });
+    let ok: boolean;
+    try {
+      ok = lsWriteSafe("test_key", [{ id: "1" }]);
+    } finally {
+      if (originalDescriptor) {
+        Object.defineProperty(localStorage, "setItem", originalDescriptor);
+      }
+    }
+    expect(ok!).toBe(false);
   });
 
   it("does not throw to the caller when quota error occurs", () => {
-    const original = localStorage.setItem.bind(localStorage);
-    localStorage.setItem = () => { throw new DOMException("QuotaExceededError"); };
-    expect(() => lsWriteSafe("test_key", [{ id: "1" }])).not.toThrow();
-    localStorage.setItem = original;
+    Object.defineProperty(localStorage, "setItem", {
+      configurable: true, writable: true,
+      value: () => { throw new DOMException("QuotaExceededError"); },
+    });
+    try {
+      expect(() => lsWriteSafe("test_key", [{ id: "1" }])).not.toThrow();
+    } finally {
+      // Restore: delete the own property so prototype chain is used again
+      delete (localStorage as unknown as Record<string, unknown>)["setItem"];
+    }
   });
 });
 
