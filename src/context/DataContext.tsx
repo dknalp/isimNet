@@ -348,7 +348,8 @@ export function DataProvider({ children }: { children: React.ReactNode }) {
         // Also restore product stock for any sales that get orphaned
         const cIds = new Set((data.customers as Customer[]).map((c: Customer) => c.id));
         const orphanSales = (data.sales as Sale[] ?? []).filter(s => !cIds.has(s.customerId));
-        if (orphanSales.length > 0) {
+        const hadOrphans = orphanSales.length > 0;
+        if (hadOrphans) {
           LOG.warn("mount: cleaning orphan sales — restoring stock", { count: orphanSales.length });
           const now = new Date().toISOString();
           setProducts(prev => prev.map(p => {
@@ -369,6 +370,14 @@ export function DataProvider({ children }: { children: React.ReactNode }) {
         syncedSeq.current = mutationSeq.current;
         LOG.sync("mount: applied GitHub data", { sha: data.sha });
         setIsLoading(false);
+
+        // If orphan cleanup modified stock or removed records, push the corrected
+        // data back to GitHub so it doesn't revert on next device load.
+        if (hadOrphans) {
+          LOG.warn("mount: orphan cleanup changed data — pushing corrected state to GitHub");
+          mutationSeq.current += 1;
+          void syncToDriveInternal();
+        }
       })
       .catch(e => {
         LOG.error("mount: fetch error — using local data", e);
