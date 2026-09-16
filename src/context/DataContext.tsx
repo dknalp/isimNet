@@ -387,35 +387,39 @@ export function DataProvider({ children }: { children: React.ReactNode }) {
         const cIds = new Set(mounted.customers.map((c: Customer) => c.id));
         const orphanSales = mounted.sales.filter(s => !cIds.has(s.customerId));
         const hadOrphans = orphanSales.length > 0;
+        const now = new Date().toISOString();
+        // Compute corrected products synchronously so we can write to LS immediately
+        const cleanProducts = hadOrphans
+          ? mounted.products.map((p: Product) => {
+              let restored = p.stock;
+              for (const sale of orphanSales) {
+                const item = sale.items.find((i: { productId: string }) => i.productId === p.id);
+                if (item) restored += (item as { quantity: number }).quantity;
+              }
+              if (restored === p.stock) return p;
+              LOG.info("mount: orphan stock restored", { productId: p.id, from: p.stock, to: restored });
+              return { ...p, stock: restored, updatedAt: now };
+            })
+          : mounted.products;
+
         if (hadOrphans) {
           LOG.warn("mount: cleaning orphan sales — restoring stock", { count: orphanSales.length });
-          const now = new Date().toISOString();
-          setProducts(prev => prev.map(p => {
-            let restored = p.stock;
-            for (const sale of orphanSales) {
-              const item = sale.items.find(i => i.productId === p.id);
-              if (item) restored += item.quantity;
-            }
-            if (restored === p.stock) return p;
-            LOG.info("mount: orphan stock restored", { productId: p.id, from: p.stock, to: restored });
-            return { ...p, stock: restored, updatedAt: now };
-          }));
+          setProducts(cleanProducts);
         }
-        const cleanSales    = mounted.sales.filter(s    => cIds.has(s.customerId));
-        const cleanPayments = mounted.payments.filter(p  => cIds.has(p.customerId));
-        const cleanDebts    = mounted.debts.filter(d    => cIds.has(d.customerId));
+        const cleanSales    = mounted.sales.filter((s: Sale)    => cIds.has(s.customerId));
+        const cleanPayments = mounted.payments.filter((p: Payment)  => cIds.has(p.customerId));
+        const cleanDebts    = mounted.debts.filter((d: Debt)    => cIds.has(d.customerId));
         setSales(cleanSales);
         setPayments(cleanPayments);
         setDebts(cleanDebts);
 
-        // If orphan cleanup ran, write corrected data to LS immediately so a crash
-        // before syncToDriveInternal completes doesn't revert the cleanup
+        // Write corrected data to LS immediately so a crash before syncToDriveInternal
+        // completes doesn't revert the orphan cleanup (all 5 arrays including products)
         if (hadOrphans) {
+          lsWrite(lsRef.current.products, cleanProducts);
           lsWrite(lsRef.current.sales,    cleanSales);
           lsWrite(lsRef.current.payments, cleanPayments);
           lsWrite(lsRef.current.debts,    cleanDebts);
-          // Note: products LS written after React batches the setProducts updater —
-          // syncToDriveInternal will push the corrected products server-side
         }
 
         syncedSeq.current = mutationSeq.current;
