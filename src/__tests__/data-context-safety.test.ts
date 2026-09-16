@@ -53,18 +53,18 @@ describe("P0-A: lsWrite quota error surfacing", () => {
   });
 
   it("returns false when localStorage.setItem throws (simulated quota)", () => {
-    vi.spyOn(Storage.prototype, "setItem").mockImplementation(() => {
-      throw new DOMException("QuotaExceededError");
-    });
+    const original = localStorage.setItem.bind(localStorage);
+    localStorage.setItem = () => { throw new DOMException("QuotaExceededError"); };
     const ok = lsWriteSafe("test_key", [{ id: "1" }]);
+    localStorage.setItem = original;
     expect(ok).toBe(false);
   });
 
   it("does not throw to the caller when quota error occurs", () => {
-    vi.spyOn(Storage.prototype, "setItem").mockImplementation(() => {
-      throw new DOMException("QuotaExceededError");
-    });
+    const original = localStorage.setItem.bind(localStorage);
+    localStorage.setItem = () => { throw new DOMException("QuotaExceededError"); };
     expect(() => lsWriteSafe("test_key", [{ id: "1" }])).not.toThrow();
+    localStorage.setItem = original;
   });
 });
 

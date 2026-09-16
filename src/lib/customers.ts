@@ -65,7 +65,16 @@ export function buildActivityFeed(sales: Sale[], payments: Payment[], debts: Deb
     ...sales.map((s) => ({ type: "sale" as const, date: s.date, data: s })),
     ...payments.map((p) => ({ type: "payment" as const, date: p.date, data: p })),
     ...debts.map((d) => ({ type: "debt" as const, date: d.date, data: d })),
-  ].sort((a, b) => a.date.localeCompare(b.date));
+  ].sort((a, b) => {
+    const dateCmp = a.date.localeCompare(b.date);
+    if (dateCmp !== 0) return dateCmp;
+    // Stable tie-breaker: payments and debts (reductions) before sales on same timestamp
+    const typeOrder = { payment: 0, debt: 1, sale: 2 };
+    const typeCmp = typeOrder[a.type] - typeOrder[b.type];
+    if (typeCmp !== 0) return typeCmp;
+    // Final tie-breaker: ID lexicographic order for full determinism
+    return (a.data as Sale | Payment | Debt).id.localeCompare((b.data as Sale | Payment | Debt).id);
+  });
 
   let balance = 0;
   const items: ActivityItem[] = raw.map((r) => {

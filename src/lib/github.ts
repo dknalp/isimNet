@@ -41,10 +41,19 @@ export async function readDataFile(
   if (res.status === 404) return { data: null, sha: null };
   if (!res.ok) return { data: null, sha: null };
   const json = await res.json();
-  const data: AppData = JSON.parse(
-    Buffer.from(json.content, "base64").toString("utf-8")
-  );
-  return { data, sha: json.sha };
+  if (!json.content) {
+    console.error(`readDataFile: missing content field for user ${userId}`);
+    return { data: null, sha: null };
+  }
+  try {
+    const data: AppData = JSON.parse(
+      Buffer.from(json.content, "base64").toString("utf-8")
+    );
+    return { data, sha: json.sha };
+  } catch (err) {
+    console.error(`readDataFile: corrupt content for user ${userId}`, err);
+    return { data: null, sha: null };
+  }
 }
 
 // Eski ayrı dosyalardan okur — yalnızca migration için
@@ -112,16 +121,14 @@ export async function writeDataFile(
   // 409 → taze SHA alıp bir kez daha dene
   console.warn("writeDataFile: 409 conflict, retrying with fresh SHA");
   const fresh = await readDataFile(userId);
-  if (fresh.data === null && fresh.sha === null) {
-    // Dosya artık yok — SHA olmadan yaz
-    return attemptWrite(userId, data, null) as Promise<string | null>;
-  }
-  const retry = await attemptWrite(userId, data, fresh.sha);
-  if (retry === "CONFLICT") {
+
+  // Dosya artık yok veya corrupt — SHA olmadan yaz
+  const retryResult = await attemptWrite(userId, data, fresh.sha);
+  if (retryResult === "CONFLICT") {
     console.error("writeDataFile: second conflict, giving up");
     return null;
   }
-  return retry;
+  return retryResult;
 }
 
 // data.json yoksa eski dosyalardan migrate et
