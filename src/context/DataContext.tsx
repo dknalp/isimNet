@@ -174,6 +174,7 @@ export function DataProvider({ children }: { children: React.ReactNode }) {
     mutationSeq.current += 1;
     lastMutationAt.current = Date.now();
     try { localStorage.setItem(LS.lastMutation, String(lastMutationAt.current)); } catch { /* */ }
+    setIsDirty(true);
   }
 
   const setC = useCallback((fn: (prev: Customer[]) => Customer[]) => {
@@ -278,6 +279,8 @@ export function DataProvider({ children }: { children: React.ReactNode }) {
         syncedSeq.current = seqAtStart;
       }
       shaRef.current = json.sha;
+      // Clear dirty flag only if no new mutations arrived during this sync
+      setIsDirty(mutationSeq.current > seqAtStart);
 
       const now = new Date();
       setLastSyncTime(now);
@@ -744,7 +747,7 @@ export function DataProvider({ children }: { children: React.ReactNode }) {
     addPayment, updatePayment, deletePayment,
     addDebt, updateDebt, deleteDebt,
     getCustomerTotals, getCustomerFeed,
-    isDirty: mutationSeq.current > syncedSeq.current,
+    isDirty,
     syncToDrive, restoreFromDrive, clearAllData,
     canUndo, undoLastAction,
   }), [
@@ -756,7 +759,7 @@ export function DataProvider({ children }: { children: React.ReactNode }) {
     addPayment, updatePayment, deletePayment,
     addDebt, updateDebt, deleteDebt,
     getCustomerTotals, getCustomerFeed,
-    isDirty: mutationSeq.current > syncedSeq.current,
+    isDirty,
     syncToDrive, restoreFromDrive, clearAllData,
     canUndo, undoLastAction,
   ]);
