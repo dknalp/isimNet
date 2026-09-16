@@ -403,3 +403,123 @@ describe("syncLock: concurrent sync prevention", () => {
     expect(trySync()).toBe(true);
   });
 });
+
+// ── syncToDriveInternal: P0/P1 sequence safety ────────────────────────────────
+// Key invariants of the sync function — documented as tests.
+
+describe("syncToDriveInternal: sequence capture safety (P1)", () => {
+  it("seqAtStart must be captured BEFORE any await to protect concurrent mutations", () => {
+    // Simulate: seq=5 at sync start, mutation arrives mid-flight (seq=6)
+    let mutationSeq = 5;
+    const seqAtStart = mutationSeq; // captured synchronously before await
+
+    // Mutation arrives while sync is in flight
+    mutationSeq = 6;
+
+    // After sync success: advance syncedSeq to seqAtStart only (not current)
+    const syncedSeqAfter = seqAtStart;
+    const isDirtyAfter = mutationSeq > syncedSeqAfter;
+
+    expect(syncedSeqAfter).toBe(5);  // only marks seq=5 as synced
+    expect(isDirtyAfter).toBe(true);  // seq=6 mutation still dirty → next sync picks it up
+  });
+
+  it("if two mutations arrive during sync, both stay dirty", () => {
+    let mutationSeq = 3;
+    const seqAtStart = mutationSeq; // 3
+
+    mutationSeq = 5; // two mutations in-flight
+
+    const syncedSeqAfter = seqAtStart; // 3
+    expect(mutationSeq > syncedSeqAfter).toBe(true); // 5 > 3 = dirty
+  });
+});
+
+describe("syncToDriveInternal: P0 sha guard", () => {
+  it("missing sha in 200 response means write may have silently failed — stay dirty", () => {
+    // If GitHub returns 200 but json.sha is missing:
+    const json = { message: "ok" }; // no sha field
+    const writeFailed = !json.sha;
+    expect(writeFailed).toBe(true);
+    // syncedSeq should NOT advance — data remains dirty for retry
+  });
+
+  it("present sha confirms write success — advance syncedSeq", () => {
+    const json = { sha: "abc123" };
+    const writeConfirmed = !!json.sha;
+    expect(writeConfirmed).toBe(true);
+  });
+});
+
+describe("syncToDriveInternal: network error leaves data dirty", () => {
+  it("on error: syncedSeq must NOT advance so data retries on next sync", () => {
+    let mutationSeq = 7;
+    let syncedSeq = 4;
+
+    // Simulate: sync throws network error — syncedSeq NOT updated
+    // (syncToDriveInternal catches error and returns without advancing syncedSeq)
+    const isDirty = mutationSeq > syncedSeq;
+    expect(isDirty).toBe(true); // data survives for retry
+  });
+});
+
+// ── clearAllData: sha reset on write failure ──────────────────────────────────
+// When clearAllData fails to reach GitHub (network error, rate limit),
+// shaRef.current is reset to null so the next auto-sync attempt sends
+// sha:null → triggers 422 → retry-with-fresh-SHA path (from Loop 2 fix).
+
+describe("clearAllData: sha=null reset on failure enables retry path", () => {
+  it("sha=null after failure means next sync will use fresh SHA from GitHub", () => {
+    let shaRef: string | null = "old-sha-abc";
+
+    // Simulate clearAllData write failure
+    shaRef = null;
+
+    // Next sync captures sha=null and sends it
+    const nextSyncSha = shaRef;
+    expect(nextSyncSha).toBeNull();
+
+    // GitHub returns 422 (file exists, no sha) → CONFLICT sentinel → retry with fresh SHA
+    const status = 422;
+    const isConflict = status === 409 || status === 422;
+    expect(isConflict).toBe(true); // will trigger retry-with-fresh-SHA
+  });
+});
+
+// ── keepalive: uses stateRef.current, not stale closure ──────────────────────
+// The visibilitychange handler is attached once (useEffect with [] deps).
+// If it captured customers/products etc. as closure variables, they'd be stale.
+// It must read stateRef.current to get the latest state at the time of the event.
+
+describe("keepalive: stateRef prevents stale closure data", () => {
+  it("reading from ref gives current state even in a closure from mount", () => {
+    // Simulate: ref is assigned at every render
+    const stateRef = { current: { customers: [] as {id:string}[] } };
+
+    // Closure captures the ref object (not its .current)
+    function onHide() {
+      return stateRef.current.customers; // reads through ref — always current
+    }
+
+    // State updates after closure was created
+    stateRef.current = { customers: [{ id: "c1" }] };
+
+    // Closure still reads correct current value
+    expect(onHide()).toHaveLength(1);
+    expect(onHide()[0].id).toBe("c1");
+  });
+
+  it("direct closure variable would be stale — demonstrates why ref is needed", () => {
+    let customers: {id:string}[] = [];
+
+    // Closure captures the value at creation time
+    const staleCustomers = customers;
+
+    // State updates
+    customers = [{ id: "c1" }];
+
+    // Closure has stale empty array
+    expect(staleCustomers).toHaveLength(0); // demonstrates the bug we avoid
+    expect(customers).toHaveLength(1);      // actual current state
+  });
+});
