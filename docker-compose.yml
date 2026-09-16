@@ -2,7 +2,7 @@ services:
   app:
     build: .
     ports:
-      - "3000:3000"
+      - "6784:3000"
     volumes:
       - isimnet_data:/data
     env_file: .env
