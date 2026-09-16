@@ -3,6 +3,7 @@ import { Geist, Geist_Mono } from "next/font/google";
 import { SessionProvider } from "next-auth/react";
 import { DataProvider } from "@/context/DataContext";
 import "./globals.css";
+import UndoToast from "@/components/ui/UndoToast";
 
 const geistSans = Geist({
   variable: "--font-geist-sans",
@@ -17,6 +18,17 @@ const geistMono = Geist_Mono({
 export const metadata: Metadata = {
   title: "İşimNet",
   description: "İşinizi kolaylaştırın",
+  manifest: "/manifest.json",
+  appleWebApp: {
+    capable: true,
+    statusBarStyle: "default",
+    title: "İşimNet",
+  },
+  formatDetection: { telephone: false },
+};
+
+export const viewport = {
+  themeColor: "#4F46E5",
 };
 
 export default function RootLayout({
@@ -29,10 +41,14 @@ export default function RootLayout({
       lang="tr"
       className={`${geistSans.variable} ${geistMono.variable} h-full antialiased`}
     >
+      <head>
+        <link rel="apple-touch-icon" href="/logo.png" />
+      </head>
       <body className="min-h-full flex flex-col">
         <SessionProvider>
           <DataProvider>
             {children}
+            <UndoToast />
           </DataProvider>
         </SessionProvider>
       </body>

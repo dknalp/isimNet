@@ -462,7 +462,7 @@ export function DataProvider({ children }: { children: React.ReactNode }) {
   // ── CRUD: customers ───────────────────────────────────────────────────────
   const addCustomer = useCallback((data: NewCustomerFormData) => {
     const now = new Date().toISOString();
-    const newC: Customer = { ...data, id: `c_${Date.now()}`, createdAt: now, updatedAt: now };
+    const newC: Customer = { ...data, id: `c_${Date.now()}_${Math.random().toString(36).slice(2,7)}`, createdAt: now, updatedAt: now };
     LOG.info("addCustomer", { id: newC.id, name: newC.name });
     setC(prev => [newC, ...prev]);
   }, [setC]);
@@ -526,7 +526,7 @@ export function DataProvider({ children }: { children: React.ReactNode }) {
   // ── CRUD: products ────────────────────────────────────────────────────────
   const addProduct = useCallback((data: NewProductFormData) => {
     const now = new Date().toISOString();
-    const newP: Product = { ...data, id: `p_${Date.now()}`, createdAt: now, updatedAt: now };
+    const newP: Product = { ...data, id: `p_${Date.now()}_${Math.random().toString(36).slice(2,7)}`, createdAt: now, updatedAt: now };
     LOG.info("addProduct", { id: newP.id, name: newP.name });
     setP(prev => [newP, ...prev]);
   }, [setP]);
@@ -544,7 +544,7 @@ export function DataProvider({ children }: { children: React.ReactNode }) {
 
   // ── CRUD: sales (with stock adjustment) ──────────────────────────────────
   const addSale = useCallback((data: Omit<Sale, "id">) => {
-    const newS: Sale = { ...data, id: `s_${Date.now()}` };
+    const newS: Sale = { ...data, id: `s_${Date.now()}_${Math.random().toString(36).slice(2,7)}` };
     LOG.info("addSale", { id: newS.id, customerId: newS.customerId, total: newS.total });
     setS(prev => [newS, ...prev]);
     const now = new Date().toISOString();
@@ -590,7 +590,7 @@ export function DataProvider({ children }: { children: React.ReactNode }) {
 
   // ── CRUD: payments ────────────────────────────────────────────────────────
   const addPayment = useCallback((data: Omit<Payment, "id">) => {
-    const newP: Payment = { ...data, id: `pay_${Date.now()}` };
+    const newP: Payment = { ...data, id: `pay_${Date.now()}_${Math.random().toString(36).slice(2,7)}` };
     LOG.info("addPayment", { id: newP.id, customerId: newP.customerId, amount: newP.amount });
     setPay(prev => [newP, ...prev]);
   }, [setPay]);
@@ -608,7 +608,7 @@ export function DataProvider({ children }: { children: React.ReactNode }) {
 
   // ── CRUD: debts ───────────────────────────────────────────────────────────
   const addDebt = useCallback((data: Omit<Debt, "id">) => {
-    const newD: Debt = { ...data, id: `d_${Date.now()}` };
+    const newD: Debt = { ...data, id: `d_${Date.now()}_${Math.random().toString(36).slice(2,7)}` };
     LOG.info("addDebt", { id: newD.id, customerId: newD.customerId, amount: newD.amount });
     setD(prev => [newD, ...prev]);
   }, [setD]);

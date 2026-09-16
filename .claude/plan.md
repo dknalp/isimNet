@@ -1,119 +1,78 @@
-# Backend Engineering Report: Bugs, Critical Issues & Test Gaps
+# Major Development Ideas — İşimNet
 
-## Context
-
-Deep analysis of the IsimNet backend: `src/lib/github.ts`, `src/app/api/sync/route.ts`, `src/context/DataContext.tsx`, `src/lib/customers.ts`, `src/lib/products.ts`, and all four test files. The goal is to surface real bugs, data integrity risks, and missing test coverage before they hit production.
+This is a prioritized list of high-impact improvements, evaluated from a backend/data-integrity lens but covering the full product. Each idea is scoped by effort and business value.
 
 ---
 
-## CRITICAL BUGS
+## TIER 1 — High impact, achievable now (architecture fits, no new infra)
 
-### 1. Silent Write Failure — No Error Propagation to UI
-**File:** `src/context/DataContext.tsx:203-218` (`syncToDrive`)  
-**Bug:** When `POST /api/sync` returns `ok: true` but with `sha: null` (GitHub write returned null due to 409 double-conflict or 500), `shaRef.current` is set to `null`. The next write attempt goes out with no SHA. GitHub will reject it with 422 (Unprocessable) if the file already exists — because a PUT without SHA on an existing file is invalid. The user sees no error; data silently fails to sync.  
-**Impact:** Data loss. User thinks they saved; they didn't.
+### 1. Offline-First PWA with Service Worker + Background Sync
+**What:** Convert the app to a full PWA. Cache the shell and API responses with a service worker. Queue writes (new sales, payments) in IndexedDB when offline, replay them to GitHub when connectivity returns via Background Sync API.
+**Why it matters:** The current architecture assumes connectivity for every write. A shopkeeper in a basement or rural area loses all their in-progress work on network drop. This is the #1 reliability gap.
+**Effort:** Large. Service worker, workbox or manual cache strategy, IndexedDB write queue, conflict resolution on replay.
+**Backend impact:** Sync route needs an idempotency key per operation so replayed writes don't double-record.
 
-### 2. deleteCustomer Mutates Multiple State Slices Non-Atomically
-**File:** `src/context/DataContext.tsx:300-305`  
-**Bug:** `deleteCustomer` calls `setC`, `setS`, `setPay`, `setD` — four separate React state updates. Between renders, `stateRef.current` is updated on each render, but `mutationSeq` is incremented 4 times. If `syncToDrive` fires (via the 3-min timer or visibility change) between any two of these updates, it sends a partially-cleaned dataset: the customer is deleted but some of their sales/payments/debts still exist. This partial state gets persisted to GitHub.  
-**Impact:** Orphan records in GitHub's copy; data corruption.
+### 2. Granular Operation Log (Event Sourcing lite)
+**What:** Instead of syncing the entire state snapshot on every flush, append individual operations to a log: `{ op: "addSale", payload: {...}, ts: "...", clientId: "..." }`. GitHub stores `log.json` alongside `data.json`. On load, replay the log to reconstruct state.
+**Why it matters:** Eliminates the SHA race condition class entirely (append-only never conflicts), enables undo/redo, enables audit trail ("who added this sale and when"), and makes multi-device sync correct instead of last-writer-wins.
+**Effort:** Large. Requires log compaction strategy, replay engine, schema migration.
+**Backend impact:** Replaces `writeDataFile` with `appendToLog`; read path replays log to derive current state.
 
-### 3. ID Generation: `Date.now()` Is Not Unique Under Rapid Creation
-**File:** `DataContext.tsx:290, 310, 326, 368, 381`  
-**Bug:** All IDs use `` `c_${Date.now()}` ``. `Date.now()` has millisecond resolution. Rapid additions (e.g., bulk import, fast double-tap) within the same millisecond produce duplicate IDs.  
-**Impact:** Silent record collision — one record silently overwrites another in array lookups.
-
-### 4. `readDataFile` Swallows JSON Parse Errors
-**File:** `src/lib/github.ts:43-47`  
-**Bug:** If GitHub returns 200 but `json.content` is malformed base64 or the decoded content is invalid JSON, the `JSON.parse` on line 45 throws. This exception propagates up uncaught to the `GET /api/sync` handler's try/catch, which returns `{ error: "Read failed", status: 500 }`. The client then falls back to localStorage silently — but the user's GitHub data is corrupt and they have no idea.  
-**Impact:** Corrupt remote data goes undetected; user continues making changes against stale local data that will overwrite GitHub on next sync.
-
-### 5. `buildActivityFeed` Sort Is Unstable for Same-Millisecond Events
-**File:** `src/lib/customers.ts:68`  
-**Bug:** Sort uses `a.date.localeCompare(b.date)`. Dates are stored as ISO strings (full timestamp). Two events added in rapid succession get the same timestamp. The sort is not stable across all JS engines (V8 is stable since Node 11, but the sort comparator returns 0 → arbitrary order). Running balance depends on order, so the displayed `runningBalance` for same-timestamp events is non-deterministic.  
-**Impact:** Wrong balance displayed in customer feed.
-
-### 6. `deleteCustomer` Does NOT Restore Stock for Deleted Sales
-**File:** `DataContext.tsx:300-305`  
-**Bug:** When a customer is deleted, their sales are deleted (`setS` filter), but the product stock is never restored. `deleteSale` restores stock correctly, but `deleteCustomer` bypasses it and directly filters sales.  
-**Impact:** Stock counts are permanently wrong after a customer deletion that had sales.
-
-### 7. `attemptWrite` Uses `json.content?.sha` — Wrong Field for New Files
-**File:** `src/lib/github.ts:101`  
-**Bug:** GitHub's Contents API PUT response for a **create** (new file) returns `{ content: { sha: "..." }, commit: {...} }` — `content.sha` is the blob SHA, **not** the file SHA needed for future updates. The file SHA needed for subsequent updates is in `json.content.sha` on an update, but the path when creating is also `json.content.sha`. These are actually the same field; however the code returns `json.content?.sha` which would be null if the GitHub response structure changes. More critically: on the write-on-404 path in `writeDataFile` lines 115-117, the code casts to `Promise<string | null>` — `attemptWrite` returns `string | "CONFLICT" | null`, and the cast hides that "CONFLICT" is still possible in that branch.  
-**Impact:** Type unsafety; CONFLICT from the null-SHA write path returns `"CONFLICT"` as the sha string, which gets stored in `shaRef.current` and sent to GitHub as a literal SHA — causing 422.
+### 3. Multi-User / Shared Business Account
+**What:** Allow multiple Google accounts to share one data set (e.g., owner + employee). One user is "owner", others are "members" with role-based access (member cannot delete customers, cannot see reports).
+**Why it matters:** Almost every SMB has more than one person touching the register. Currently each Google account gets its own isolated data silo — there's no way to collaborate.
+**Effort:** Large. Requires an invitation flow, a shared userId namespace, role middleware in the sync route.
+**Backend impact:** `users/{ownerId}/data.json` becomes the canonical path; member sessions resolve to the owner's path via an `invitations.json` lookup.
 
 ---
 
-## HIGH-SEVERITY MISSING BEHAVIORS
+## TIER 2 — High value, moderate effort
 
-### 8. No Input Validation in POST `/api/sync`
-**File:** `src/app/api/sync/route.ts:37-48`  
-**Missing:** Body is accepted as-is. An array element with `id: null`, `amount: -99999`, `customerId: ""`, or `vatRate: 15` passes straight through to GitHub. There is no schema validation anywhere in the API layer.  
-**Risk:** Corrupt data stored in GitHub; financial calculations silently wrong.
+### 4. Invoice / Receipt Generation (PDF)
+**What:** Generate a printable/shareable PDF receipt for each sale: customer name, items, quantities, unit prices, VAT breakdown, total, date. Share via WhatsApp or download.
+**Why it matters:** This is the feature most likely to make a shopkeeper switch from paper to the app. The data is already all there — `Sale.items`, `vatRate`, `total`.
+**Effort:** Medium. Use `@react-pdf/renderer` or a server-side route that builds HTML → PDF via Puppeteer. No new data model needed.
 
-### 9. Token Refresh Error Is Not Propagated — Sync Proceeds with Stale Session
-**File:** `src/lib/auth.ts:61-65`  
-**Bug:** When `refreshAccessToken` fails, `token.error = "RefreshTokenError"` is set. The session callback at line 70 propagates this to `session.error`. But the sync route only checks `session?.userId` — it never checks `session.error`. A user with an expired, unrefreshable token still gets `userId` in the session and their sync requests go out with a stale `accessToken` (which isn't used in sync — GitHub token is server-side). This is actually fine for GitHub sync itself, but the `session.error` is never surfaced to the user, so they silently use an invalid Google session.
+### 5. Customer Debt Aging & Overdue Alerts
+**What:** Tag debts and unpaid balances as "overdue" once they pass a configurable threshold (e.g., 30/60/90 days). Surface on the dashboard as a priority list. Optionally send a push notification reminder.
+**Why it matters:** The core use case is receivables management. Right now the app shows the balance but gives no signal about which customers need to be called today.
+**Effort:** Medium. Pure computation on top of existing data: `balance > 0 && oldestUnpaidSale.date < now - threshold`. Push requires a VAPID key + service worker.
 
-### 10. `restoreFromDrive` Does Not Restore Stock Consistency
-**File:** `DataContext.tsx:221-247`  
-**Missing:** After restoring from GitHub, product stock values reflect whatever was in the remote file. If the local state had stock modifications (unsaved), the restore correctly overwrites them. But if the remote data itself has inconsistent stock (e.g., stock was manually edited in GitHub JSON), there is no recomputation from sales history. Stock is accepted as-is, which may be wrong.
+### 6. Bulk Import via CSV/Excel
+**What:** Let the user upload a CSV of customers (name, phone, opening balance) or products (name, price, stock) to seed the app instead of entering records one by one.
+**Why it matters:** The biggest adoption barrier for an existing business is migration. Nobody will manually re-enter 200 customers.
+**Effort:** Medium. Client-side CSV parse (`papaparse`), preview/confirm step, map columns to types, batch-write to DataContext.
 
-### 11. `clearAllData` Is Not Atomic — Race With Periodic Sync
-**File:** `DataContext.tsx:393-415`  
-**Bug:** `clearAllData` sets all state to empty (incrementing `mutationSeq`), then calls POST. The 3-minute interval timer could fire `syncToDrive` concurrently. If the timer fires between the clear and the POST, `syncToDrive` sees `mutationSeq !== syncedSeq` and sends the empty state to GitHub — which is fine. But if the POST in `clearAllData` then also fires, two concurrent POSTs go out with the same SHA. One will get 409; the conflict handler will re-fetch (now empty) and retry with fresh SHA. Net result: correct, but wasteful and log-noisy.
-
----
-
-## TEST GAPS (Not Covered)
-
-### Currently covered:
-- `readDataFile`: 200, 404, 500, correct URL, auth header
-- `writeDataFile`: success, sha included/excluded, base64, 409 retry, double-conflict, non-409 failure
-- `readOrMigrateDataFile`: existing data.json, all files 404
-- `GET /api/sync`: auth, data present, data absent
-- `POST /api/sync`: auth, write success, data passing, sha passing, null sha default, write failure
-
-### Missing tests:
-
-| # | What | File to create/extend |
-|---|------|-----------------------|
-| T1 | `readDataFile` — malformed base64 in `content` throws → should return `null/null` not throw | `github.test.ts` |
-| T2 | `readDataFile` — valid base64 but invalid JSON content | `github.test.ts` |
-| T3 | `writeDataFile` — 404 during retry-read (file deleted between conflict and retry) uses null SHA | `github.test.ts` |
-| T4 | `readOrMigrateDataFile` — legacy files exist, data.json absent → migrates and returns legacy data | `github.test.ts` |
-| T5 | `readOrMigrateDataFile` — legacy files exist but migration write fails (returns null sha) | `github.test.ts` |
-| T6 | `buildActivityFeed` — empty inputs | new `customers.test.ts` |
-| T7 | `buildActivityFeed` — running balance: sale then payment then debt | new `customers.test.ts` |
-| T8 | `buildActivityFeed` — same-date events (order stability) | new `customers.test.ts` |
-| T9 | `buildActivityFeed` — result is sorted newest-first (reversed) | new `customers.test.ts` |
-| T10 | `POST /api/sync` — body with missing fields defaults to `[]` (null safety) | `sync-route.test.ts` |
-| T11 | `POST /api/sync` — malformed JSON body (req.json() throws) returns 500 | `sync-route.test.ts` |
-| T12 | `GET /api/sync` — GitHub returns corrupt base64 → API returns 500, not 200 with garbage | `sync-route.test.ts` |
-| T13 | `formatCurrencyDisplay` — empty string, integer, decimal, already-formatted input | new `format.test.ts` |
-| T14 | `parseCurrencyDisplay` — round-trips with `formatCurrencyDisplay` | new `format.test.ts` |
-| T15 | ID uniqueness: two rapid `addSale` calls don't collide (currently untestable without crypto.randomUUID — this test should drive the fix) | new `dataContext.test.ts` |
+### 7. Return / Refund Flow
+**What:** Allow recording a return against an existing sale: select items and quantities to return, automatically restock the product and credit the customer's balance.
+**Why it matters:** Returns are a real business event that currently has no first-class representation. Users work around it by creating negative debts or manual adjustments — both produce wrong running balances.
+**Effort:** Medium. New `Return` type linked to `saleId`, stock restore logic (mirrors `deleteSale` but partial), activityFeed entry type.
 
 ---
 
-## RECOMMENDED FIXES (priority order)
+## TIER 3 — Strategic, higher effort
 
-1. **Bug #1 + #7** — In `syncToDrive`, treat `sha: null` response as a sync failure, set `isSyncError` state, surface to user.
-2. **Bug #6** — In `deleteCustomer`, iterate over the customer's sales and restore stock before filtering them out (reuse the stock-restore logic from `deleteSale`).
-3. **Bug #3** — Replace `Date.now()` IDs with `crypto.randomUUID()` (available in all modern browsers and Node 16+).
-4. **Bug #4** — Wrap the `JSON.parse` in `readDataFile` in try/catch; return `{ data: null, sha: null }` on parse error and log a warning.
-5. **Bug #2** — Batch the four state updates in `deleteCustomer` into a single logical mutation (use `useReducer` or a single state object), or use a write-lock flag.
-6. **Gaps T4/T5** — Add migration tests (the happy path migration is completely untested).
-7. **Gap T11** — Add malformed-body test to `sync-route.test.ts`.
+### 8. WhatsApp / SMS Statement Sharing
+**What:** Generate a customer statement (list of sales, payments, current balance) as a formatted text message and open WhatsApp with it pre-filled via `wa.me/?text=...`.
+**Why it matters:** Turkish SMB owners actively collect via WhatsApp. Sending a statement is a daily workflow. This turns the app into a communication tool, not just a ledger.
+**Effort:** Low-medium. Text formatting from existing data, `encodeURIComponent`, `window.open`. No backend needed.
+
+### 9. Analytics Dashboard (per product, per customer, per period)
+**What:** A richer reports page: top 5 customers by revenue, best-selling products, monthly revenue trend chart, days-sales-outstanding metric.
+**Why it matters:** The current reports page shows three aggregate numbers. Business owners want trends and rankings to make decisions.
+**Effort:** Medium. All data is local — it's a pure computation and charting problem (`recharts` or `chart.js`).
+
+### 10. Backup to Google Drive / Export JSON
+**What:** Let the user download a full `data.json` backup or export to Google Drive as an additional backup layer beyond GitHub.
+**Why it matters:** GitHub is not a user-facing concept. If the user loses access to their GitHub account (or PAT expires), they lose all data with no recovery path. A user-owned backup closes this gap.
+**Effort:** Small-medium. Google Drive API with the existing OAuth token, or simple JSON download via `Blob` + `URL.createObjectURL`.
 
 ---
 
-## Verification
+## Quick Wins (< 1 day each)
 
-```bash
-npm run test              # all unit tests pass
-npm run test:coverage     # check coverage on github.ts + route.ts
-npx vitest run src/__tests__/customers.test.ts   # new file
-npx vitest run src/__tests__/format.test.ts      # new file
-```
+- **Installable PWA manifest** — add `manifest.json` + icons so the app can be installed to home screen. Zero backend work.
+- **WhatsApp statement share** — see #8 above, essentially free to build.
+- **Customer notes on payments** — `Payment.description` is already in the schema but the UI may not surface it prominently in the feed.
+- **Stock low-warning badge** — highlight products with `stock < threshold` (user-configurable) in red on the product list.
+- **Undo last action** — keep a single-entry undo buffer in DataContext; surfaces as a toast "Satış silindi. Geri al?" for 5 seconds.

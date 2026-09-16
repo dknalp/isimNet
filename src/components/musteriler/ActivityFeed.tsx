@@ -1,12 +1,13 @@
-import { ActivityItem } from "@/lib/customers";
+import { ActivityItem, Customer } from "@/lib/customers";
 import ActivityFeedItem from "./ActivityFeedItem";
 
 interface ActivityFeedProps {
   items: ActivityItem[];
   onEdit?: (item: ActivityItem) => void;
+  customer?: Customer;
 }
 
-export default function ActivityFeed({ items, onEdit }: ActivityFeedProps) {
+export default function ActivityFeed({ items, onEdit, customer }: ActivityFeedProps) {
   if (items.length === 0) {
     return (
       <div className="text-center py-12 text-gray-400">
@@ -29,7 +30,7 @@ export default function ActivityFeed({ items, onEdit }: ActivityFeedProps) {
   return (
     <div className="flex flex-col gap-3">
       {items.map((item, index) => (
-        <ActivityFeedItem key={`${item.type}-${item.date}-${index}`} item={item} onEdit={onEdit} />
+        <ActivityFeedItem key={`${item.type}-${item.date}-${index}`} item={item} onEdit={onEdit} customer={customer} />
       ))}
     </div>
   );

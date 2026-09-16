@@ -198,3 +198,26 @@ describe("restoreFromDrive: empty GitHub response guard", () => {
     expect(simulateRestoreGuard(clearedResponse)).toBe("applied");
   });
 });
+
+// ── ID collision prevention ───────────────────────────────────────────────────
+// IDs use Date.now() + random suffix. Without the suffix, two records created
+// in the same millisecond get the same ID — silent data corruption.
+
+function generateId(prefix: string): string {
+  return `${prefix}_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`;
+}
+
+describe("ID generation: collision resistance", () => {
+  it("two IDs generated back-to-back differ even in the same millisecond", () => {
+    const ids = Array.from({ length: 100 }, () => generateId("c"));
+    const unique = new Set(ids);
+    expect(unique.size).toBe(100);
+  });
+
+  it("ID format matches expected prefix_timestamp_random pattern", () => {
+    const id = generateId("s");
+    expect(id).toMatch(/^s_\d+_[a-z0-9]{5}$/);
+  });
+
+  it("random suffix has 5 base36 characters", () => {
+    for (let i = 0; i < 20

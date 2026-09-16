@@ -2,13 +2,15 @@
 
 import { useState } from "react";
 import { BsDatabaseFillDash } from "react-icons/bs";
-import { ActivityItem, Sale, Payment, Debt } from "@/lib/customers";
+import { ActivityItem, Sale, Payment, Debt, Customer } from "@/lib/customers";
+import SaleReceiptDownloadButton from "./SaleReceiptPDF";
 import { formatCurrency } from "@/lib/format";
 import { useData } from "@/context/DataContext";
 
 interface ActivityFeedItemProps {
   item: ActivityItem;
   onEdit?: (item: ActivityItem) => void;
+  customer?: Customer;
 }
 
 function formatShortDate(iso: string): string {
@@ -21,7 +23,7 @@ function formatDateTime(iso: string): string {
   return d.toLocaleString("tr-TR", { day: "2-digit", month: "short", year: "numeric", hour: "2-digit", minute: "2-digit" });
 }
 
-export default function ActivityFeedItem({ item, onEdit }: ActivityFeedItemProps) {
+export default function ActivityFeedItem({ item, onEdit, customer }: ActivityFeedItemProps) {
   const [isOpen, setIsOpen] = useState(false);
   const [confirmDelete, setConfirmDelete] = useState(false);
   const { deleteSale, deletePayment, deleteDebt } = useData();
@@ -174,6 +176,11 @@ export default function ActivityFeedItem({ item, onEdit }: ActivityFeedItemProps
                   </svg>
                   Düzenle
                 </button>
+                {isSale && sale && customer && (
+                  <span onClick={(e) => e.stopPropagation()}>
+                    <SaleReceiptDownloadButton sale={sale} customer={customer} />
+                  </span>
+                )}
                 <button
                   onClick={(e) => { e.stopPropagation(); setConfirmDelete(true); }}
                   className="flex items-center gap-1.5 text-xs text-red-400 hover:text-red-600 transition-colors"
