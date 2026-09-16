@@ -697,15 +697,16 @@ export function DataProvider({ children }: { children: React.ReactNode }) {
           const json = await res.json().catch(() => null);
           if (json?.ok) {
             syncedSeq.current = mutationSeq.current;
+            setIsDirty(false);
             const now = new Date();
             setLastSyncTime(now);
             try { localStorage.setItem(LS.lastSync, now.toISOString()); } catch { /* */ }
           } else {
-            // Write succeeded but sha missing — keep data dirty so next auto-sync retries
+            // Write succeeded but response not ok — keep data dirty so next auto-sync retries
             LOG.error("clearAllData: remote wipe response not ok — will retry on next sync");
             setSyncError("Veri silme doğrulanamadı. Bir sonraki senkronizasyonda tekrar denenecek.");
           }
-          LOG.warn("clearAllData: remote data wiped", { sha: json?.sha });
+          LOG.warn("clearAllData: remote data wiped");
         } else {
           // Remote wipe failed — data is locally empty but remotely still has old data
           LOG.error(`clearAllData: remote wipe failed HTTP ${res.status}`);
