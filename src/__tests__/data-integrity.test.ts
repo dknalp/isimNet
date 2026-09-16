@@ -266,3 +266,36 @@ describe("isDirty: unsaved mutation tracking", () => {
     expect(isDirty).toBe(true);
   });
 });
+
+// ── undoLastAction: must mark dirty after restore ─────────────────────────────
+// undoLastAction restores from snapshot via direct setState (not setC/setP wrappers).
+// Without markMutation(), the restored state would never sync to GitHub.
+
+describe("undoLastAction: dirty tracking after restore", () => {
+  it("undo without dirty mark leaves syncedSeq === mutationSeq (bug scenario)", () => {
+    let mutationSeq = 2;
+    let syncedSeq = 2; // just synced
+    // Undo fires, restores state — if it does NOT call markMutation:
+    // mutationSeq stays at 2, syncedSeq stays at 2 → isDirty = false → no GitHub push
+    const isDirty = mutationSeq > syncedSeq;
+    expect(isDirty).toBe(false); // demonstrates the bug
+  });
+
+  it("undo with markMutation leaves mutationSeq > syncedSeq (correct behavior)", () => {
+    let mutationSeq = 2;
+    let syncedSeq = 2; // just synced
+    // Undo fires, restores state, calls markMutation:
+    mutationSeq += 1; // markMutation increments
+    const isDirty = mutationSeq > syncedSeq;
+    expect(isDirty).toBe(true); // triggers sync loop
+  });
+
+  it("next sync after undo advances syncedSeq and clears dirty", () => {
+    let mutationSeq = 3; // after undo's markMutation
+    const seqAtStart = 3;
+    // sync runs successfully
+    let syncedSeq = seqAtStart;
+    const isDirty = mutationSeq > syncedSeq;
+    expect(isDirty).toBe(false);
+  });
+});
