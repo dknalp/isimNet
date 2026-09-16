@@ -345,7 +345,23 @@ export function DataProvider({ children }: { children: React.ReactNode }) {
         if (Array.isArray(data.debts))     { setDebts(data.debts);         lsWrite(LS.debts,     data.debts); }
 
         // Clean orphan records (customer deleted on another device)
+        // Also restore product stock for any sales that get orphaned
         const cIds = new Set((data.customers as Customer[]).map((c: Customer) => c.id));
+        const orphanSales = (data.sales as Sale[] ?? []).filter(s => !cIds.has(s.customerId));
+        if (orphanSales.length > 0) {
+          LOG.warn("mount: cleaning orphan sales — restoring stock", { count: orphanSales.length });
+          const now = new Date().toISOString();
+          setProducts(prev => prev.map(p => {
+            let restored = p.stock;
+            for (const sale of orphanSales) {
+              const item = sale.items.find(i => i.productId === p.id);
+              if (item) restored += item.quantity;
+            }
+            if (restored === p.stock) return p;
+            LOG.info("mount: orphan stock restored", { productId: p.id, from: p.stock, to: restored });
+            return { ...p, stock: restored, updatedAt: now };
+          }));
+        }
         setSales(prev   => prev.filter(s => cIds.has(s.customerId)));
         setPayments(prev => prev.filter(p => cIds.has(p.customerId)));
         setDebts(prev   => prev.filter(d => cIds.has(d.customerId)));
