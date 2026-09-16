@@ -53,9 +53,9 @@ export async function readDataFile(
   }
   try {
     const data: AppData = JSON.parse(
-      Buffer.from(json.content, "base64").toString("utf-8")
+      Buffer.from(json.content as string, "base64").toString("utf-8")
     );
-    return { data, sha: json.sha };
+    return { data, sha: (json.sha as string) ?? null };
   } catch (err) {
     console.error(`readDataFile: corrupt content for user ${userId}`, err);
     return { data: null, sha: null };
@@ -71,7 +71,7 @@ async function readLegacyFiles(userId: string): Promise<AppData | null> {
       if (!res.ok) return [];
       const json = await res.json();
       try {
-        return JSON.parse(Buffer.from(json.content, "base64").toString("utf-8"));
+        return JSON.parse(Buffer.from(json.content as string, "base64").toString("utf-8"));
       } catch {
         return [];
       }
