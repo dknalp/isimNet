@@ -77,3 +77,64 @@ describe("deleteCustomer: stock restoration", () => {
     expect(result[0]).toBe(products[0]);
   });
 });
+
+// ── Mount: orphan sales stock restoration ────────────────────────────────────
+// When mount fetches GitHub data and finds sales for customers that no longer
+// exist (deleted on another device), it removes those sales and must also
+// restore the product stock they consumed.
+
+function simulateOrphanCleanup(
+  products: Product[],
+  allSales: Sale[],
+  validCustomerIds: string[]
+): { products: Product[]; sales: Sale[] } {
+  const cIds = new Set(validCustomerIds);
+  const orphanSales = allSales.filter(s => !cIds.has(s.customerId));
+  const now = new Date().toISOString();
+  const updatedProducts = products.map(p => {
+    let restored = p.stock;
+    for (const sale of orphanSales) {
+      const item = sale.items.find((i: SaleItem) => i.productId === p.id);
+      if (item) restored += item.quantity;
+    }
+    if (restored === p.stock) return p;
+    return { ...p, stock: restored, updatedAt: now };
+  });
+  const remainingSales = allSales.filter(s => cIds.has(s.customerId));
+  return { products: updatedProducts, sales: remainingSales };
+}
+
+describe("mount: orphan sale cleanup restores product stock", () => {
+  it("restores stock when a customer's sales are orphaned", () => {
+    const products = [makeProduct("p1", 3)]; // was 10, 7 sold in total
+    const sales = [
+      makeSale("s1", "c1", [{ productId: "p1", quantity: 4 }]), // c1 deleted
+      makeSale("s2", "c2", [{ productId: "p1", quantity: 3 }]), // c2 still valid
+    ];
+    const { products: result, sales: remaining } = simulateOrphanCleanup(
+      products, sales, ["c2"] // c1 deleted on other device
+    );
+    expect(result[0].stock).toBe(7); // 3 + 4 (from c1's orphaned sale)
+    expect(remaining).toHaveLength(1);
+    expect(remaining[0].id).toBe("s2");
+  });
+
+  it("does not change stock when no orphan sales exist", () => {
+    const products = [makeProduct("p1", 5)];
+    const sales = [makeSale("s1", "c1", [{ productId: "p1", quantity: 5 }])];
+    const { products: result } = simulateOrphanCleanup(products, sales, ["c1"]);
+    expect(result[0].stock).toBe(5); // unchanged
+    expect(result[0]).toBe(products[0]); // same reference
+  });
+
+  it("handles orphan sales across multiple products", () => {
+    const products = [makeProduct("p1", 2), makeProduct("p2", 8)];
+    const sale = makeSale("s1", "c1", [
+      { productId: "p1", quantity: 3 },
+      { productId: "p2", quantity: 2 },
+    ]);
+    const { products: result } = simulateOrphanCleanup(products, [sale], []);
+    expect(result.find(p => p.id === "p1")!.stock).toBe(5);
+    expect(result.find(p => p.id === "p2")!.stock).toBe(10);
+  });
+});
