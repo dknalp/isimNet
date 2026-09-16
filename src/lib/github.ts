@@ -101,6 +101,8 @@ async function attemptWrite(
   });
 
   if (res.status === 409) return "CONFLICT";
+  // 422 = "file already exists but no sha provided" — treat like a conflict
+  if (res.status === 422) return "CONFLICT";
   if (!res.ok) {
     const err = await res.text().catch(() => "");
     console.error(`writeDataFile failed [${res.status}]: ${path}`, err);
