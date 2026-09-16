@@ -160,10 +160,10 @@ describe("buildActivityFeed: sort order", () => {
       [makePayment({ id: "pay1", date: ts, amount: 50 })],
       [makeDebt({ id: "d1", date: ts, amount: 25 })]
     );
-    // Sort is descending by date; for same-timestamp, typeOrder ascending (payment=0,debt=1,sale=2)
-    // so same-date items appear as: payment first, debt second, sale last (payment wins tie-break)
+    // Sort ascending by typeOrder (payment=0,debt=1,sale=2), then items.reverse() for newest-first display.
+    // After reversal: [payment,debt,sale] → [sale,debt,payment]
     const types = feed.map(f => f.type);
-    expect(types).toEqual(["payment", "debt", "sale"]);
+    expect(types).toEqual(["sale", "debt", "payment"]);
   });
 
   it("different dates across types are interleaved correctly", () => {
