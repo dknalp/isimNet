@@ -40,7 +40,13 @@ export async function readDataFile(
   const res = await ghGet(dataPath(userId));
   if (res.status === 404) return { data: null, sha: null };
   if (!res.ok) return { data: null, sha: null };
-  const json = await res.json();
+  let json: Record<string, unknown>;
+  try {
+    json = await res.json();
+  } catch {
+    console.error(`readDataFile: response.json() failed for user ${userId}`);
+    return { data: null, sha: null };
+  }
   if (!json.content) {
     console.error(`readDataFile: missing content field for user ${userId}`);
     return { data: null, sha: null };
@@ -108,8 +114,14 @@ async function attemptWrite(
     console.error(`writeDataFile failed [${res.status}]: ${path}`, err);
     return null;
   }
-  const json = await res.json();
-  return (json.content?.sha as string) ?? null;
+  let json: Record<string, unknown>;
+  try {
+    json = await res.json();
+  } catch {
+    console.error(`attemptWrite: response.json() failed for user ${userId}`);
+    return null;
+  }
+  return ((json.content as Record<string, unknown>)?.sha as string) ?? null;
 }
 
 export async function writeDataFile(

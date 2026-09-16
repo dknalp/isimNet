@@ -1,0 +1,37 @@
+# Dependencies
+node_modules
+
+# Build output
+.next
+out
+dist
+build
+coverage
+
+# Git
+.git
+.gitignore
+
+# Local data (never bake user data into image)
+data/
+
+# Secrets and local env — only .env.example is safe to include
+.env
+.env.local
+.env.*.local
+*.pem
+*.key
+
+# Dev / test artifacts
+*.log
+npm-debug.log*
+.DS_Store
+Thumbs.db
+
+# Editor
+.vscode
+.idea
+
+# Claude / Rusk
+.claude
+.rusk

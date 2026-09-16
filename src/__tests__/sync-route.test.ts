@@ -284,3 +284,23 @@ describe("POST /api/sync — boundary cases", () => {
     expect(written.customers).toHaveLength(500);
   });
 });
+
+// ─── Round 11: auth() throws (not returns null) ───────────────────────────────
+
+describe("GET /api/sync — auth() throws", () => {
+  it("returns 500 when auth() throws an unexpected error", async () => {
+    mockAuth.mockRejectedValue(new Error("auth service unavailable"));
+    // Next.js catches unhandled errors in route handlers and returns 500
+    // Our route does not wrap auth() in try/catch — it will throw
+    // Document: this is an unhandled throw that Next.js's error boundary catches
+    await expect(GET()).rejects.toThrow("auth service unavailable");
+  });
+});
+
+describe("POST /api/sync — auth() throws", () => {
+  it("throws when auth() throws (no try/catch around auth)", async () => {
+    mockAuth.mockRejectedValue(new Error("auth service unavailable"));
+    const req = makePostRequest(SAMPLE_DATA);
+    await expect(POST(req)).rejects.toThrow("auth service unavailable");
+  });
+});

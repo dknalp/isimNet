@@ -137,6 +137,7 @@ export function DataProvider({ children }: { children: React.ReactNode }) {
   const [lastSyncTime, setLastSyncTime] = useState<Date | null>(null);
   const [syncError,    setSyncError]    = useState<string | null>(null);
   const [isDirty,      setIsDirty]      = useState(false);
+  const [pendingSyncTick, setPendingSyncTick] = useState(0);
 
   // ── Undo buffer ─────────────────────────────────────────────────────────
   type UndoSnapshot = {
@@ -176,6 +177,7 @@ export function DataProvider({ children }: { children: React.ReactNode }) {
     lastMutationAt.current = Date.now();
     try { localStorage.setItem(lsRef.current.lastMutation, String(lastMutationAt.current)); } catch { /* */ }
     setIsDirty(true);
+    setPendingSyncTick(t => t + 1);
   }
 
   const setC = useCallback((fn: (prev: Customer[]) => Customer[]) => {
@@ -500,6 +502,12 @@ export function DataProvider({ children }: { children: React.ReactNode }) {
     return () => clearInterval(id);
   }, [status, syncToDriveInternal]);
 
+  // Fires after React re-renders with new state — stateRef.current is guaranteed fresh here
+  useEffect(() => {
+    if (pendingSyncTick === 0) return;
+    void syncToDriveInternal();
+  }, [pendingSyncTick, syncToDriveInternal]);
+
   // ── CRUD: customers ───────────────────────────────────────────────────────
   const addCustomer = useCallback((data: NewCustomerFormData) => {
     const now = new Date().toISOString();
@@ -788,7 +796,7 @@ export function DataProvider({ children }: { children: React.ReactNode }) {
     const totalRevenue   = sales.filter(s => s.customerId === customerId).reduce((sum, s) => sum + s.total, 0);
     const totalCollected = payments.filter(p => p.customerId === customerId).reduce((sum, p) => sum + p.amount, 0);
     const myDebt         = debts.filter(d => d.customerId === customerId).reduce((sum, d) => sum + d.amount, 0);
-    return { totalRevenue, totalCollected, currentDebt: totalRevenue - totalCollected, myDebt };
+    return { totalRevenue, totalCollected, currentDebt: totalRevenue - totalCollected - myDebt, myDebt };
   }, [sales, payments, debts]);
 
   const getCustomerFeed = useCallback((customerId: string): ActivityItem[] => {

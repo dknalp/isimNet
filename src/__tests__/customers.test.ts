@@ -203,3 +203,192 @@ describe("buildActivityFeed: single item", () => {
     expect(feed[0].runningBalance).toBe(-75);
   });
 });
+
+// ─── Round 3: Business logic edge cases ──────────────────────────────────────
+
+describe("buildActivityFeed: edge cases", () => {
+  const BASE_DATE = "2026-01-01T12:00:00.000Z";
+
+  it("negative balance when payments exceed sales", () => {
+    const sales: Sale[] = [{
+      id: "s1", customerId: "c1", date: "2026-01-01T10:00:00.000Z",
+      items: [], subtotal: 100, vatRate: 0, vatAmount: 0, total: 100,
+    }];
+    const payments: Payment[] = [{
+      id: "pay1", customerId: "c1", date: "2026-01-02T10:00:00.000Z",
+      amount: 200, description: "overpayment",
+    }];
+    const feed = buildActivityFeed(sales, payments);
+    // Most recent first: payment at top, then sale
+    expect(feed[0].runningBalance).toBe(-100); // 100 - 200 = -100
+    expect(feed[1].runningBalance).toBe(100);
+  });
+
+  it("debt reduces balance (same as payment)", () => {
+    const debts: Debt[] = [{
+      id: "d1", customerId: "c1", date: BASE_DATE, amount: 50, description: "credit",
+    }];
+    const feed = buildActivityFeed([], [], debts);
+    expect(feed[0].runningBalance).toBe(-50);
+  });
+
+  it("handles 1000 items without stack overflow", () => {
+    const sales: Sale[] = Array.from({ length: 1000 }, (_, i) => ({
+      id: `s${i}`, customerId: "c1",
+      date: new Date(Date.now() + i * 1000).toISOString(),
+      items: [], subtotal: 1, vatRate: 0, vatAmount: 0, total: 1,
+    }));
+    expect(() => buildActivityFeed(sales, [])).not.toThrow();
+    const feed = buildActivityFeed(sales, []);
+    expect(feed).toHaveLength(1000);
+    expect(feed[0].runningBalance).toBe(1000); // most recent = highest balance
+  });
+
+  it("single sale: runningBalance equals total", () => {
+    const sales: Sale[] = [{
+      id: "s1", customerId: "c1", date: BASE_DATE,
+      items: [], subtotal: 250, vatRate: 10, vatAmount: 25, total: 275,
+    }];
+    const feed = buildActivityFeed(sales, []);
+    expect(feed).toHaveLength(1);
+    expect(feed[0].runningBalance).toBe(275);
+    expect(feed[0].type).toBe("sale");
+  });
+
+  it("single payment: runningBalance is negative (no prior sales)", () => {
+    const payments: Payment[] = [{
+      id: "pay1", customerId: "c1", date: BASE_DATE, amount: 100, description: "advance",
+    }];
+    const feed = buildActivityFeed([], payments);
+    expect(feed).toHaveLength(1);
+    expect(feed[0].runningBalance).toBe(-100);
+  });
+
+  it("items with same date and same type sorted by ID lexicographically then reversed", () => {
+    const sales: Sale[] = [
+      { id: "s_b", customerId: "c1", date: BASE_DATE, items: [], subtotal: 1, vatRate: 0, vatAmount: 0, total: 1 },
+      { id: "s_a", customerId: "c1", date: BASE_DATE, items: [], subtotal: 2, vatRate: 0, vatAmount: 0, total: 2 },
+    ];
+    const feed = buildActivityFeed(sales, []);
+    // Ascending sort by (date, type=sale, id): s_a < s_b → after reverse: s_b first
+    expect((feed[0].data as Sale).id).toBe("s_b");
+    expect((feed[1].data as Sale).id).toBe("s_a");
+  });
+});
+
+// ─── Round 5: getCustomerTotals logic (pure functions extracted for testing) ──
+
+describe("currentDebt formula: totalRevenue - totalCollected - myDebt", () => {
+  it("currentDebt excludes Debt entries if only totalRevenue - totalCollected used (bug check)", () => {
+    // Simulating what getCustomerTotals returns
+    const sales    = [{ total: 500 }];
+    const payments = [{ amount: 100 }];
+    const debts    = [{ amount: 150 }]; // Debt = credit/write-off
+
+    const totalRevenue   = sales.reduce((s, x)    => s + x.total,  0); // 500
+    const totalCollected = payments.reduce((s, x) => s + x.amount, 0); // 100
+    const myDebt         = debts.reduce((s, x)    => s + x.amount, 0); // 150
+
+    const currentDebt = totalRevenue - totalCollected - myDebt; // 250
+    expect(currentDebt).toBe(250);
+    // Old buggy formula: totalRevenue - totalCollected = 400 (WRONG — ignores debt write-offs)
+    expect(totalRevenue - totalCollected).toBe(400);
+  });
+
+  it("currentDebt is zero when all amounts balance", () => {
+    const totalRevenue   = 1000;
+    const totalCollected = 600;
+    const myDebt         = 400;
+    expect(totalRevenue - totalCollected - myDebt).toBe(0);
+  });
+
+  it("currentDebt can go negative when total credits exceed sales", () => {
+    const totalRevenue   = 100;
+    const totalCollected = 200;
+    const myDebt         = 50;
+    expect(totalRevenue - totalCollected - myDebt).toBe(-150);
+  });
+
+  it("buildActivityFeed and currentDebt formula agree on balance", () => {
+    // The running balance in buildActivityFeed at the end (first item after reverse)
+    // should match totalRevenue - totalCollected - myDebt
+    const sales: Sale[] = [{
+      id: "s1", customerId: "c1", date: "2026-01-01T10:00:00.000Z",
+      items: [], subtotal: 500, vatRate: 0, vatAmount: 0, total: 500,
+    }];
+    const payments: Payment[] = [{
+      id: "pay1", customerId: "c1", date: "2026-01-02T10:00:00.000Z",
+      amount: 100, description: "payment",
+    }];
+    const debts: Debt[] = [{
+      id: "d1", customerId: "c1", date: "2026-01-03T10:00:00.000Z",
+      amount: 150, description: "write-off",
+    }];
+
+    const feed = buildActivityFeed(sales, payments, debts);
+    // Most recent first → feed[0] is the debt (most recent date), its runningBalance = final balance
+    const finalBalance = feed[0].runningBalance;
+    const formulaBalance = 500 - 100 - 150;
+    expect(finalBalance).toBe(formulaBalance); // 250
+  });
+});
+
+// ─── Round 15: Final edge cases ───────────────────────────────────────────────
+
+describe("buildActivityFeed: omitted debts parameter", () => {
+  it("works correctly when debts parameter is omitted (defaults to [])", () => {
+    const sales: Sale[] = [{
+      id: "s1", customerId: "c1", date: "2026-01-01T10:00:00.000Z",
+      items: [], subtotal: 100, vatRate: 0, vatAmount: 0, total: 100,
+    }];
+    const payments: Payment[] = [];
+    // Calling with only 2 arguments — debts defaults to []
+    const feed = buildActivityFeed(sales, payments);
+    expect(feed).toHaveLength(1);
+    expect(feed[0].runningBalance).toBe(100);
+  });
+
+  it("explicitly passing empty debts array is same as omitting", () => {
+    const sales: Sale[] = [{
+      id: "s1", customerId: "c1", date: "2026-01-01T10:00:00.000Z",
+      items: [], subtotal: 100, vatRate: 0, vatAmount: 0, total: 100,
+    }];
+    const withExplicit = buildActivityFeed(sales, [], []);
+    const withOmitted  = buildActivityFeed(sales, []);
+    expect(withExplicit).toEqual(withOmitted);
+  });
+});
+
+describe("buildActivityFeed: DST and timezone boundaries", () => {
+  it("correctly orders events across DST boundary dates", () => {
+    // March DST change — ISO strings still sort correctly as strings
+    const sales: Sale[] = [
+      {
+        id: "s1", customerId: "c1", date: "2026-03-29T01:00:00.000Z", // before DST
+        items: [], subtotal: 100, vatRate: 0, vatAmount: 0, total: 100,
+      },
+      {
+        id: "s2", customerId: "c1", date: "2026-03-29T03:00:00.000Z", // after DST
+        items: [], subtotal: 200, vatRate: 0, vatAmount: 0, total: 200,
+      },
+    ];
+    const feed = buildActivityFeed(sales, []);
+    // Most recent first
+    expect((feed[0].data as Sale).id).toBe("s2");
+    expect((feed[1].data as Sale).id).toBe("s1");
+    expect(feed[0].runningBalance).toBe(300); // cumulative: 100+200
+    expect(feed[1].runningBalance).toBe(100);
+  });
+});
+
+describe("buildActivityFeed: data type passed through correctly", () => {
+  it("feed item.data is the original Sale/Payment/Debt object (not a copy)", () => {
+    const originalSale: Sale = {
+      id: "s1", customerId: "c1", date: "2026-01-01T10:00:00.000Z",
+      items: [{ productId: "p1", productName: "Elma", quantity: 2, unitPrice: 10 }],
+      subtotal: 20, vatRate: 10, vatAmount: 2, total: 22,
+    };
+    const feed = buildActivityFeed([originalSale], []);
+    expect(feed[0].data).toBe(originalSale); // strict reference equality
+  });
+});

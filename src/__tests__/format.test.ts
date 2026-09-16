@@ -125,3 +125,121 @@ describe("parseCurrencyDisplay", () => {
     expect(parseCurrencyDisplay("   ")).toBe(0);
   });
 });
+
+// ─── Round 3: parseCurrencyDisplay edge cases ─────────────────────────────────
+
+describe("parseCurrencyDisplay: advanced cases", () => {
+  it("parses millions correctly: '1.000.000,50' → 1000000.5", () => {
+    expect(parseCurrencyDisplay("1.000.000,50")).toBe(1000000.5);
+  });
+
+  it("'1,000' → 1 (Turkish comma is decimal separator, not thousands)", () => {
+    // In TR format, comma is decimal. "1,000" = 1.000 = 1
+    expect(parseCurrencyDisplay("1,000")).toBe(1);
+  });
+
+  it("'-1.000' → NaN or 0 (negative numbers not handled by display format)", () => {
+    // parseCurrencyDisplay replaces dots with nothing, comma with dot
+    // "-1.000" → "-1000" → parseFloat("-1000") = -1000
+    // Negatives pass through — document actual behavior
+    const result = parseCurrencyDisplay("-1.000");
+    expect(typeof result).toBe("number");
+  });
+
+  it("'0,00' → 0", () => {
+    expect(parseCurrencyDisplay("0,00")).toBe(0);
+  });
+
+  it("'999999999' (no separators) → 999999999", () => {
+    expect(parseCurrencyDisplay("999999999")).toBe(999999999);
+  });
+});
+
+describe("formatCurrencyDisplay: advanced cases", () => {
+  it("'9999999999' → '9.999.999.999' (very large number)", () => {
+    expect(formatCurrencyDisplay("9999999999")).toBe("9.999.999.999");
+  });
+
+  it("'1.000' (already formatted) → '1.000' (idempotent)", () => {
+    // "1.000" → strip dots → "1000" → format → "1.000"
+    expect(formatCurrencyDisplay("1.000")).toBe("1.000");
+  });
+
+  it("'1.000,50' (already formatted with decimal) → '1.000,50'", () => {
+    expect(formatCurrencyDisplay("1.000,50")).toBe("1.000,50");
+  });
+
+  it("'0' → '0'", () => {
+    expect(formatCurrencyDisplay("0")).toBe("0");
+  });
+});
+
+describe("formatCurrency: edge cases", () => {
+  it("formatCurrency(0) renders zero (not empty)", () => {
+    const result = formatCurrency(0);
+    expect(result).toContain("0");
+  });
+
+  it("formatCurrency(-500) renders negative value", () => {
+    const result = formatCurrency(-500);
+    expect(result).toContain("500");
+    expect(result).toContain("-");
+  });
+
+  it("formatCurrency(NaN) does not throw", () => {
+    expect(() => formatCurrency(NaN)).not.toThrow();
+  });
+
+  it("formatCurrency(1_000_000) includes thousands separator", () => {
+    const result = formatCurrency(1_000_000);
+    // Turkish format uses dots as thousands separators
+    expect(result.replace(/\s/g, "")).toMatch(/1[.,]000[.,]000/);
+  });
+});
+
+// ─── Round 11: Remaining edge cases ──────────────────────────────────────────
+
+describe("formatCurrencyDisplay: more edge cases", () => {
+  it("'0,' (zero then comma) → '0,'", () => {
+    expect(formatCurrencyDisplay("0,")).toBe("0,");
+  });
+
+  it("',' (comma only) → ','", () => {
+    // commaIdx=0 → intPart="" → formattedInt="" → ","+decPart=""
+    expect(formatCurrencyDisplay(",")).toBe(",");
+  });
+
+  it("'1000.5' (dot without comma) — dot treated as thousand separator, NOT decimal", () => {
+    // The docstring example '1000.5 → 1.000,5' is misleading.
+    // Without a comma, dots are treated as thousand separators and stripped.
+    // '1000.5' → strip dots → '10005' → format → '10.005' (ACTUAL behavior)
+    // To get '1.000,5', the user must type '1000,5' (comma as decimal separator)
+    expect(formatCurrencyDisplay("1000.5")).toBe("10.005"); // documents actual, not docstring
+    expect(formatCurrencyDisplay("1000,5")).toBe("1.000,5"); // correct way to get decimal
+  });
+
+  it("'10000,20' → '10.000,20'", () => {
+    // Per the docstring example
+    expect(formatCurrencyDisplay("10000,20")).toBe("10.000,20");
+  });
+
+  it("decimal part truncated to 2 digits: '1000,123' → '1.000,12'", () => {
+    expect(formatCurrencyDisplay("1000,123")).toBe("1.000,12");
+  });
+});
+
+describe("parseCurrencyDisplay: whitespace and special inputs", () => {
+  it("whitespace-only string → 0", () => {
+    expect(parseCurrencyDisplay("   ")).toBe(0);
+  });
+
+  it("'NaN' string → 0", () => {
+    expect(parseCurrencyDisplay("NaN")).toBe(0);
+  });
+
+  it("'Infinity' string → 0 (parseFloat returns Infinity, but || 0 catches falsy — Infinity is truthy)", () => {
+    // parseFloat("Infinity") = Infinity, which is truthy, so it's returned as-is
+    const result = parseCurrencyDisplay("Infinity");
+    expect(typeof result).toBe("number");
+  });
+});

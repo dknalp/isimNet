@@ -15,7 +15,7 @@ const emptyForm: NewCustomerFormData = { name: "", phone: "", note: "" };
 
 export default function NewCustomerModal({ open, onClose, onSubmit, initialData, title }: NewCustomerModalProps) {
   const [form, setForm] = useState<NewCustomerFormData>(initialData ?? emptyForm);
-  const [errors, setErrors] = useState<{ name?: string; phone?: string }>({});
+  const [errors, setErrors] = useState<{ name?: string }>({});
 
   useEffect(() => {
     if (open) setForm(initialData ?? emptyForm);
@@ -27,10 +27,8 @@ export default function NewCustomerModal({ open, onClose, onSubmit, initialData,
   if (!open) return null;
 
   function validate(): boolean {
-    const newErrors: { name?: string; phone?: string } = {};
+    const newErrors: { name?: string } = {};
     if (!form.name.trim()) newErrors.name = "Ad soyad zorunludur";
-    if (form.phone && !/^0[0-9]{10}$/.test(form.phone.replace(/\s/g, "")))
-      newErrors.phone = "Geçerli telefon numarası girin";
     setErrors(newErrors);
     return Object.keys(newErrors).length === 0;
   }
@@ -63,7 +61,6 @@ export default function NewCustomerModal({ open, onClose, onSubmit, initialData,
             <input type="tel" inputMode="numeric" placeholder="Telefon (opsiyonel)" value={form.phone ?? ""}
               onChange={(e) => setForm({ ...form, phone: e.target.value })}
               className={inputClass} />
-            {errors.phone && <p className="text-red-500 text-xs mt-1 ml-1">{errors.phone}</p>}
           </div>
           <textarea placeholder="Not (opsiyonel)" value={form.note ?? ""}
             onChange={(e) => setForm({ ...form, note: e.target.value })}

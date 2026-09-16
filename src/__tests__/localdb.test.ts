@@ -260,3 +260,37 @@ describe("readLocalData: invalid AppData shapes", () => {
     expect((result as unknown as Record<string, unknown>).version).toBe(2);
   });
 });
+
+// ─── Round 11: fs.mkdir throws ───────────────────────────────────────────────
+
+describe("writeLocalData: fs.mkdir throws", () => {
+  it("propagates error when mkdir throws (e.g. EACCES on /data)", async () => {
+    const err = Object.assign(new Error("EACCES: permission denied"), { code: "EACCES" });
+    mockFs.mkdir.mockRejectedValue(err);
+    await expect(writeLocalData("user1", EMPTY)).rejects.toThrow("EACCES");
+    // writeFile and rename should not have been called
+    expect(mockFs.writeFile).not.toHaveBeenCalled();
+    expect(mockFs.rename).not.toHaveBeenCalled();
+  });
+});
+
+// ─── Round 12: DATA_DIR env var edge cases ────────────────────────────────────
+
+describe("writeLocalData: DATA_DIR configuration", () => {
+  it("DATA_DIR is resolved at module load time — runtime env changes have no effect", async () => {
+    // DATA_DIR is a module-level constant: const DATA_DIR = process.env.DATA_DIR ?? path.join(cwd, "data")
+    // Changing process.env.DATA_DIR after import has no effect.
+    // This means DATA_DIR must be set before the process starts (via .env or docker-compose).
+    await writeLocalData("user1", EMPTY);
+    const [, targetPath] = mockFs.rename.mock.calls[0] as [string, string];
+    // Path always uses whatever DATA_DIR was at module load time
+    expect(targetPath).toMatch(/[a-f0-9]{64}\.json$/);
+  });
+
+  it("target path contains sha256 hash of userId under DATA_DIR", async () => {
+    await writeLocalData("user1", EMPTY);
+    const [, targetPath] = mockFs.rename.mock.calls[0] as [string, string];
+    expect(targetPath).toMatch(/[a-f0-9]{64}\.json$/);
+    expect(targetPath).not.toContain("user1");
+  });
+});

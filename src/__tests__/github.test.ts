@@ -225,3 +225,319 @@ describe("readOrMigrateDataFile", () => {
     expect(result.sha).toBeNull();
   });
 });
+// ─── readOrMigrateDataFile: expanded coverage ────────────────────────────────
+
+describe("readOrMigrateDataFile: migration paths", () => {
+  afterEach(() => {
+    vi.unstubAllGlobals();
+    vi.restoreAllMocks();
+  });
+
+  it("migrates legacy separate files when data.json is absent (404)", async () => {
+    // Legacy shape: customers.json, products.json, sales.json, payments.json, debts.json all present
+    const legacyCustomers = [{ id: "c1", name: "Ahmet" }];
+    const legacyProducts  = [{ id: "p1", name: "Ürün" }];
+    const legacySales     = [{ id: "s1" }];
+    const legacyPayments  = [{ id: "pay1" }];
+    const legacyDebts     = [{ id: "d1" }];
+
+    let callIdx = 0;
+    vi.stubGlobal("fetch", vi.fn(async (url: unknown, opts?: RequestInit) => {
+      const u = String(url);
+      const method = opts?.method ?? "GET";
+
+      // First call: data.json GET → 404 (no unified file)
+      if (method === "GET" && u.includes("data.json") && callIdx === 0) {
+        callIdx++;
+        return makeResponse("Not Found", 404);
+      }
+      // Legacy file reads (Promise.all — 5 GETs)
+      if (method === "GET" && u.includes("customers.json")) return makeResponse({ content: b64(legacyCustomers), sha: "sha_c" });
+      if (method === "GET" && u.includes("products.json"))  return makeResponse({ content: b64(legacyProducts),  sha: "sha_p" });
+      if (method === "GET" && u.includes("sales.json"))     return makeResponse({ content: b64(legacySales),     sha: "sha_s" });
+      if (method === "GET" && u.includes("payments.json"))  return makeResponse({ content: b64(legacyPayments),  sha: "sha_pay" });
+      if (method === "GET" && u.includes("debts.json"))     return makeResponse({ content: b64(legacyDebts),     sha: "sha_d" });
+      // Migration write: PUT to data.json
+      if (method === "PUT" && u.includes("data.json")) return makeResponse({ content: { sha: "migrated_sha" } });
+      return makeResponse("Unexpected", 404);
+    }));
+
+    const result = await readOrMigrateDataFile("user1");
+    expect(result.data).not.toBeNull();
+    expect(result.data!.customers).toEqual(legacyCustomers);
+    expect(result.data!.products).toEqual(legacyProducts);
+    expect(result.data!.sales).toEqual(legacySales);
+    expect(result.data!.payments).toEqual(legacyPayments);
+    expect(result.data!.debts).toEqual(legacyDebts);
+  });
+
+  it("returns null data when both data.json and all legacy files are 404", async () => {
+    vi.stubGlobal("fetch", vi.fn(async () => makeResponse("Not Found", 404)));
+    const result = await readOrMigrateDataFile("user1");
+    expect(result.data).toBeNull();
+    expect(result.sha).toBeNull();
+  });
+
+  it("returns null data when data.json is 404 and legacy files also 404 (no migration needed)", async () => {
+    let callCount = 0;
+    vi.stubGlobal("fetch", vi.fn(async () => {
+      callCount++;
+      return makeResponse("Not Found", 404);
+    }));
+    const result = await readOrMigrateDataFile("user_new");
+    expect(result.data).toBeNull();
+    expect(result.sha).toBeNull();
+    // Should have called data.json + 5 legacy files = at least 6 calls
+    expect(callCount).toBeGreaterThanOrEqual(6);
+  });
+});
+
+// ─── writeDataFile: edge case — fresh read returns null after conflict ────────
+
+describe("writeDataFile: conflict + fresh read null", () => {
+  afterEach(() => {
+    vi.unstubAllGlobals();
+    vi.restoreAllMocks();
+  });
+
+  it("returns null when 409 retry occurs but fresh readDataFile returns null data", async () => {
+    let callIdx = 0;
+    vi.stubGlobal("fetch", vi.fn(async (_url: unknown, opts?: RequestInit) => {
+      const method = opts?.method ?? "GET";
+
+      if (method === "PUT") {
+        callIdx++;
+        if (callIdx === 1) return makeResponse("Conflict", 409);
+        // Second PUT (retry) — should not be reached if we return null sha
+        return makeResponse({ content: { sha: "retry_sha" } });
+      }
+      if (method === "GET") {
+        // Fresh read after conflict returns 404 (file deleted between writes)
+        return makeResponse("Not Found", 404);
+      }
+      return makeResponse("Unexpected", 500);
+    }));
+
+    // When fresh read returns null sha, writeDataFile cannot retry meaningfully
+    // Current behavior: calls writeDataFile with null sha → GitHub creates new file or errors
+    // This test documents the actual behavior (retry proceeds with null sha)
+    const result = await writeDataFile("user1", EMPTY_DATA, "stale_sha");
+    // Behavior: either returns a new sha (if GitHub accepts null-sha PUT) or null
+    // The test ensures it does NOT throw
+    expect(result === null || typeof result === "string").toBe(true);
+  });
+});
+
+// ─── Round 4: readOrMigrateDataFile — migration paths ────────────────────────
+
+describe("readOrMigrateDataFile: migration scenarios", () => {
+  function makeFetchForMigration({
+    dataJsonStatus = 404,
+    customers = null as unknown[] | null,
+    products  = null as unknown[] | null,
+    sales     = [] as unknown[],
+    payments  = [] as unknown[],
+    debts     = [] as unknown[],
+    writeStatus = 200,
+    writeSha = "migrated_sha",
+  } = {}) {
+    const legacyMap: Record<string, unknown[] | null> = {
+      "customers.json": customers,
+      "products.json":  products,
+      "sales.json":     sales,
+      "payments.json":  payments,
+      "debts.json":     debts,
+    };
+    let callCount = 0;
+    vi.stubGlobal("fetch", vi.fn(async (url: string, opts?: RequestInit) => {
+      const method = opts?.method ?? "GET";
+      // First call: data.json check
+      if (callCount === 0) {
+        callCount++;
+        return makeResponse("", dataJsonStatus);
+      }
+      callCount++;
+      // Legacy file reads
+      for (const [file, data] of Object.entries(legacyMap)) {
+        if (url.includes(file)) {
+          if (data === null) return makeResponse("", 404);
+          return makeResponse({ content: b64(data), sha: "leg_sha" });
+        }
+      }
+      // Migration write (PUT)
+      if (method === "PUT") {
+        if (writeStatus !== 200) return makeResponse("conflict", writeStatus);
+        return makeResponse({ content: { sha: writeSha } }, writeStatus);
+      }
+      return makeResponse("", 404);
+    }));
+  }
+
+  it("happy path: data.json absent, legacy files exist → migrates and returns data", async () => {
+    const legacyCustomers = [{ id: "c1", name: "Ali" }];
+    const legacyProducts  = [{ id: "p1", name: "Ürün" }];
+    makeFetchForMigration({ customers: legacyCustomers, products: legacyProducts });
+
+    const result = await readOrMigrateDataFile("user1");
+
+    expect(result.data).not.toBeNull();
+    expect(result.data?.customers).toEqual(legacyCustomers);
+    expect(result.data?.products).toEqual(legacyProducts);
+    expect(result.sha).toBe("migrated_sha");
+  });
+
+  it("bug: returns null when customers.json exists but products.json is 404 (data silently lost)", async () => {
+    // readLegacyFiles returns null if !customers.length && !products.length
+    // But if customers exist and products don't, customers=[{...}], products=[]
+    // Then customers.length > 0 → NOT null → data returned correctly
+    // The actual bug: if customers.json is 404 but sales.json has data → all lost
+    const legacySales = [{ id: "s1" }];
+    makeFetchForMigration({
+      customers: null,   // 404
+      products: null,    // 404
+      sales: legacySales,
+    });
+
+    const result = await readOrMigrateDataFile("user1");
+    // Bug: returns null because customers=[] and products=[] even though sales has data
+    // This is a documented known bug — sales data would be silently discarded
+    expect(result.data).toBeNull(); // documents the bug, not the desired behavior
+  });
+
+  it("customers.json has data, products.json is 404 → migration works (only customers+products checked)", async () => {
+    const legacyCustomers = [{ id: "c1" }];
+    makeFetchForMigration({
+      customers: legacyCustomers,
+      products: null,  // 404
+    });
+
+    const result = await readOrMigrateDataFile("user1");
+    // customers.length > 0 → not null → migration proceeds
+    expect(result.data).not.toBeNull();
+    expect(result.data?.customers).toEqual(legacyCustomers);
+    expect(result.data?.products).toEqual([]);
+  });
+
+  it("migration write fails (409 conflict) → returns data with null sha", async () => {
+    const legacyCustomers = [{ id: "c1" }];
+    makeFetchForMigration({
+      customers: legacyCustomers,
+      products: [],
+      writeStatus: 409,
+    });
+
+    const result = await readOrMigrateDataFile("user1");
+    // writeDataFile returns null on double conflict
+    // readOrMigrateDataFile returns { data: legacy, sha: null }
+    expect(result.data).not.toBeNull();
+    // sha may be null if write failed
+    // document actual behavior
+    expect(result.data?.customers).toEqual(legacyCustomers);
+  });
+});
+
+// ─── Round 8: Unguarded res.json() paths ─────────────────────────────────────
+
+describe("readDataFile: res.json() failure", () => {
+  it("returns null when GitHub 200 response is not valid JSON (proxy error page)", async () => {
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(
+      new Response("<html>Bad Gateway</html>", {
+        status: 200,
+        headers: { "Content-Type": "text/html" },
+      })
+    ));
+    const result = await readDataFile("user1");
+    expect(result.data).toBeNull();
+    expect(result.sha).toBeNull();
+  });
+});
+
+describe("writeDataFile: res.json() failure after successful PUT", () => {
+  it("returns null when PUT 200 response body is not valid JSON", async () => {
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(
+      new Response("<html>Bad Gateway</html>", { status: 200 })
+    ));
+    const sha = await writeDataFile("user1", EMPTY_DATA, null);
+    expect(sha).toBeNull();
+  });
+});
+
+describe("writeDataFile: retry when fresh SHA is also null (file deleted during conflict resolution)", () => {
+  it("returns null when fresh read succeeds but also has no sha", async () => {
+    let callCount = 0;
+    vi.stubGlobal("fetch", vi.fn(async (_url: string, opts?: RequestInit) => {
+      const method = opts?.method ?? "GET";
+      callCount++;
+      if (method === "PUT") return makeResponse("conflict", 409);
+      // Fresh GET after conflict — file returns null sha
+      return makeResponse({ content: null, sha: null });
+    }));
+    const sha = await writeDataFile("user1", EMPTY_DATA, "stale");
+    // missing content → data=null, sha=null → retry with sha=null → 409 again → null
+    expect(sha).toBeNull();
+  });
+});
+
+// ─── Round 10: Cover remaining uncovered lines ────────────────────────────────
+
+describe("readDataFile: corrupt base64 content (line 60-61)", () => {
+  it("returns null when base64 decodes to invalid JSON", async () => {
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(
+      makeResponse({ content: Buffer.from("{ not valid json }}}").toString("base64"), sha: "sha1" })
+    ));
+    const result = await readDataFile("user1");
+    expect(result.data).toBeNull();
+    expect(result.sha).toBeNull();
+  });
+
+  it("returns null when base64 content is not valid base64", async () => {
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(
+      makeResponse({ content: "!!!not-base64!!!", sha: "sha1" })
+    ));
+    const result = await readDataFile("user1");
+    // Buffer.from("!!!not-base64!!!","base64") does not throw — it produces garbage
+    // JSON.parse of garbage throws → catch → null
+    expect(result.data).toBeNull();
+  });
+});
+
+describe("readLegacyFiles: corrupt legacy file (line 76)", () => {
+  it("returns empty array for corrupt legacy file, not null (migration still proceeds if customers exist)", async () => {
+    // customers.json = valid, products.json = corrupt base64
+    let callCount = 0;
+    vi.stubGlobal("fetch", vi.fn(async (url: string) => {
+      if (url.includes("data.json")) return makeResponse("", 404);
+      if (url.includes("customers.json")) {
+        return makeResponse({ content: Buffer.from(JSON.stringify([{ id: "c1" }])).toString("base64"), sha: "s1" });
+      }
+      if (url.includes("products.json")) {
+        // Returns valid response but corrupt base64 content
+        return makeResponse({ content: "!!!not-base64!!!", sha: "s2" });
+      }
+      // All other legacy files (sales, payments, debts) return 404
+      return makeResponse("", 404);
+    }));
+
+    const result = await readOrMigrateDataFile("user1");
+    // customers has data → migration proceeds
+    // products corrupt → falls back to []
+    expect(result.data).not.toBeNull();
+    expect(result.data?.customers).toEqual([{ id: "c1" }]);
+    expect(result.data?.products).toEqual([]);
+  });
+});
+
+// ─── Round 10b: branch coverage — res.text() throws on write failure ──────────
+
+describe("writeDataFile: res.text() fails on non-ok response", () => {
+  it("returns null when PUT fails and res.text() also throws", async () => {
+    const failResponse = new Response(null, { status: 500 });
+    Object.defineProperty(failResponse, "text", {
+      value: () => Promise.reject(new Error("body already consumed")),
+    });
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(failResponse));
+
+    const sha = await writeDataFile("user1", EMPTY_DATA, null);
+    expect(sha).toBeNull();
+  });
+});

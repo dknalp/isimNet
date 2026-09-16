@@ -6,12 +6,4 @@ export function formatCurrency(amount: number): string {
     maximumFractionDigits: 0,
   }).format(amount);
 }
-export function formatCurrencyDisplay(value: number): string {
-  return formatCurrency(value);
-}
-
-export function parseCurrencyDisplay(display: string): number {
-  const cleaned = display.replace(/[^\d,.-]/g, "").replace(",", ".");
-  const num = parseFloat(cleaned);
-  return isNaN(num) ? 0 : num;
-}
+export { formatCurrencyDisplay, parseCurrencyDisplay } from "./currencyInput";
