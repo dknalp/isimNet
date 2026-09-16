@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { auth } from "@/lib/auth";
-import { readOrMigrateDataFile, writeDataFile, AppData } from "@/lib/github";
+import { readLocalData, writeLocalData } from "@/lib/localdb";
+import type { AppData } from "@/lib/github";
 
 export async function GET() {
   const session = await auth();
@@ -9,20 +10,18 @@ export async function GET() {
   }
 
   try {
-    const { data, sha } = await readOrMigrateDataFile(session.userId);
-    if (!data) {
-      return NextResponse.json({
-        customers: [],
-        products: [],
-        sales: [],
-        payments: [],
-        debts: [],
-        sha: null,
-      });
-    }
-    return NextResponse.json({ ...data, sha });
+    const raw = await readLocalData(session.userId);
+    // Normalize: default non-array fields to [] to guard against schema drift or corrupt files
+    const data = {
+      customers: Array.isArray(raw?.customers) ? raw.customers : [],
+      products:  Array.isArray(raw?.products)  ? raw.products  : [],
+      sales:     Array.isArray(raw?.sales)     ? raw.sales     : [],
+      payments:  Array.isArray(raw?.payments)  ? raw.payments  : [],
+      debts:     Array.isArray(raw?.debts)     ? raw.debts     : [],
+    };
+    return NextResponse.json(data);
   } catch (e) {
-    console.error("GitHub read error:", e);
+    console.error("[sync] GET error:", e);
     return NextResponse.json({ error: "Read failed" }, { status: 500 });
   }
 }
@@ -62,15 +61,11 @@ export async function POST(req: NextRequest) {
       payments:  body.payments  as AppData["payments"],
       debts:     body.debts     as AppData["debts"],
     };
-    const sha = typeof body.sha === "string" ? body.sha : null;
 
-    const newSha = await writeDataFile(session.userId, data, sha);
-    if (newSha === null) {
-      return NextResponse.json({ error: "Sync failed: write returned no SHA" }, { status: 502 });
-    }
-    return NextResponse.json({ ok: true, sha: newSha });
+    await writeLocalData(session.userId, data);
+    return NextResponse.json({ ok: true });
   } catch (e) {
-    console.error("GitHub write error:", e);
+    console.error("[sync] POST error:", e);
     return NextResponse.json({ error: "Sync failed" }, { status: 500 });
   }
 }
