@@ -4,7 +4,7 @@ services:
     ports:
       - "6784:6784"
     volumes:
-      - isimnet_data:/data
+      - /opt/isimnet/data:/data
     env_file: .env
     environment:
       - HOSTNAME=0.0.0.0
@@ -17,6 +17,3 @@ services:
       timeout: 5s
       start_period: 15s
       retries: 3
-
-volumes:
-  isimnet_data:
