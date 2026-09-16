@@ -163,3 +163,38 @@ describe("addSale: stock clamping", () => {
     expect(newStock).toBe(7);
   });
 });
+
+// ── restoreFromDrive: guard against empty/missing GitHub data ─────────────────
+// If the GitHub file doesn't exist, GET /api/sync returns
+// { customers: [], products: [], ..., sha: null }.
+// restoreFromDrive MUST NOT apply this — it would wipe all local data.
+
+function simulateRestoreGuard(data: { sha: string | null; customers: unknown; products: unknown }) {
+  // Mirrors the guards added to restoreFromDrive
+  if (!data.sha) throw new Error("No data on GitHub (sha is null) — restore aborted");
+  if (!Array.isArray(data.customers) || !Array.isArray(data.products)) {
+    throw new Error("Invalid payload shape — restore aborted");
+  }
+  return "applied";
+}
+
+describe("restoreFromDrive: empty GitHub response guard", () => {
+  it("throws when sha is null (file does not exist on GitHub)", () => {
+    const emptyResponse = { sha: null, customers: [], products: [], sales: [], payments: [], debts: [] };
+    expect(() => simulateRestoreGuard(emptyResponse)).toThrow("sha is null");
+  });
+
+  it("throws when customers/products are not arrays", () => {
+    expect(() => simulateRestoreGuard({ sha: "abc123", customers: null, products: null })).toThrow("Invalid payload");
+  });
+
+  it("allows restore when sha is present and arrays are valid", () => {
+    const validResponse = { sha: "abc123", customers: [{ id: "c1" }], products: [] };
+    expect(simulateRestoreGuard(validResponse)).toBe("applied");
+  });
+
+  it("allows restore with empty arrays when sha is present (user intentionally cleared data)", () => {
+    const clearedResponse = { sha: "def456", customers: [], products: [] };
+    expect(simulateRestoreGuard(clearedResponse)).toBe("applied");
+  });
+});

@@ -104,6 +104,9 @@ interface DataContextValue {
   syncToDrive:      () => Promise<void>;
   restoreFromDrive: () => Promise<void>;
   clearAllData:     () => Promise<void>;
+
+  canUndo:        boolean;
+  undoLastAction: () => void;
 }
 
 const DataContext = createContext<DataContextValue | null>(null);
@@ -122,6 +125,18 @@ export function DataProvider({ children }: { children: React.ReactNode }) {
   const [isSyncing,    setIsSyncing]    = useState(false);
   const [lastSyncTime, setLastSyncTime] = useState<Date | null>(null);
   const [syncError,    setSyncError]    = useState<string | null>(null);
+
+  // ── Undo buffer ─────────────────────────────────────────────────────────
+  type UndoSnapshot = {
+    customers: Customer[];
+    products:  Product[];
+    sales:     Sale[];
+    payments:  Payment[];
+    debts:     Debt[];
+  };
+  const lastUndoRef  = useRef<UndoSnapshot | null>(null);
+  const undoTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const [canUndo, setCanUndo] = useState(false);
 
   useEffect(() => {
     try {
@@ -457,7 +472,34 @@ export function DataProvider({ children }: { children: React.ReactNode }) {
     setC(prev => prev.map(c => c.id === id ? { ...c, ...data, updatedAt: new Date().toISOString() } : c));
   }, [setC]);
 
+  const captureUndo = useCallback(() => {
+    if (undoTimerRef.current) clearTimeout(undoTimerRef.current);
+    lastUndoRef.current = {
+      customers, products, sales, payments, debts,
+    };
+    setCanUndo(true);
+    undoTimerRef.current = setTimeout(() => {
+      lastUndoRef.current = null;
+      setCanUndo(false);
+    }, 5000);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [customers, products, sales, payments, debts]);
+
+  const undoLastAction = useCallback(() => {
+    const snap = lastUndoRef.current;
+    if (!snap) return;
+    if (undoTimerRef.current) clearTimeout(undoTimerRef.current);
+    lastUndoRef.current = null;
+    setCanUndo(false);
+    setCustomers(snap.customers);
+    setProducts(snap.products);
+    setSales(snap.sales);
+    setPayments(snap.payments);
+    setDebts(snap.debts);
+  }, []);
+
   const deleteCustomer = useCallback((id: string) => {
+    captureUndo();
     LOG.info("deleteCustomer", { id });
     // Restore product stock for every sale belonging to this customer before deleting
     const now = new Date().toISOString();
@@ -495,6 +537,7 @@ export function DataProvider({ children }: { children: React.ReactNode }) {
   }, [setP]);
 
   const deleteProduct = useCallback((id: string) => {
+    captureUndo();
     LOG.info("deleteProduct", { id });
     setP(prev => prev.filter(p => p.id !== id));
   }, [setP]);
@@ -531,6 +574,7 @@ export function DataProvider({ children }: { children: React.ReactNode }) {
   }, [setS, setP]);
 
   const deleteSale = useCallback((id: string) => {
+    captureUndo();
     const sale = stateRef.current.sales.find(s => s.id === id);
     if (sale) {
       LOG.info("deleteSale: restoring stock", { id });
@@ -557,6 +601,7 @@ export function DataProvider({ children }: { children: React.ReactNode }) {
   }, [setPay]);
 
   const deletePayment = useCallback((id: string) => {
+    captureUndo();
     LOG.info("deletePayment", { id });
     setPay(prev => prev.filter(p => p.id !== id));
   }, [setPay]);
@@ -574,6 +619,7 @@ export function DataProvider({ children }: { children: React.ReactNode }) {
   }, [setD]);
 
   const deleteDebt = useCallback((id: string) => {
+    captureUndo();
     LOG.info("deleteDebt", { id });
     setD(prev => prev.filter(d => d.id !== id));
   }, [setD]);
@@ -697,6 +743,7 @@ export function DataProvider({ children }: { children: React.ReactNode }) {
     addDebt, updateDebt, deleteDebt,
     getCustomerTotals, getCustomerFeed,
     syncToDrive, restoreFromDrive, clearAllData,
+    canUndo, undoLastAction,
   }), [
     customers, products, sales, payments, debts,
     isLoading, isSyncing, lastSyncTime, syncError,
@@ -707,6 +754,7 @@ export function DataProvider({ children }: { children: React.ReactNode }) {
     addDebt, updateDebt, deleteDebt,
     getCustomerTotals, getCustomerFeed,
     syncToDrive, restoreFromDrive, clearAllData,
+    canUndo, undoLastAction,
   ]);
 
   return <DataContext.Provider value={value}>{children}</DataContext.Provider>;
