@@ -23,6 +23,14 @@ const SAMPLE_DATA = {
   debts:     [{ id: "d1", customerId: "c1", amount: 200 }],
 };
 
+const EMPTY_ARRAYS = {
+  customers: [],
+  products: [],
+  sales: [],
+  payments: [],
+  debts: [],
+};
+
 function makePostRequest(body: Record<string, unknown>): NextRequest {
   return new NextRequest("http://localhost/api/sync", {
     method: "POST",
@@ -143,23 +151,43 @@ describe("POST /api/sync", () => {
     );
   });
 
-  it("uses empty arrays when data fields are missing from body", async () => {
-    mockWrite.mockResolvedValue("sha");
-
+  it("returns 400 when required array fields are missing from body", async () => {
     const req = makePostRequest({ sha: null });
-    await POST(req);
+    const res = await POST(req);
+    const json = await res.json();
 
-    expect(mockWrite).toHaveBeenCalledWith(
-      "user1",
-      { customers: [], products: [], sales: [], payments: [], debts: [] },
-      null
-    );
+    expect(res.status).toBe(400);
+    expect(json.error).toMatch(/arrays/);
+    expect(mockWrite).not.toHaveBeenCalled();
+  });
+
+  it("returns 400 when a data field is not an array (e.g. object)", async () => {
+    const req = makePostRequest({ ...EMPTY_ARRAYS, customers: { id: "c1" } });
+    const res = await POST(req);
+    const json = await res.json();
+
+    expect(res.status).toBe(400);
+    expect(mockWrite).not.toHaveBeenCalled();
+  });
+
+  it("returns 400 for malformed JSON body", async () => {
+    const req = new NextRequest("http://localhost/api/sync", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: "{ not valid json",
+    });
+    const res = await POST(req);
+    const json = await res.json();
+
+    expect(res.status).toBe(400);
+    expect(json.error).toBe("Invalid JSON body");
+    expect(mockWrite).not.toHaveBeenCalled();
   });
 
   it("defaults sha to null when sha is missing from body", async () => {
     mockWrite.mockResolvedValue("sha");
 
-    const req = makePostRequest({ customers: [{ id: "c1" }] });
+    const req = makePostRequest({ ...EMPTY_ARRAYS });
     await POST(req);
 
     const [, , sha] = mockWrite.mock.calls[0] as [string, unknown, unknown];
@@ -189,15 +217,15 @@ describe("POST /api/sync", () => {
     expect(json.error).toBe("Sync failed");
   });
 
-  it("returns null sha in response when writeDataFile returns null (write failed)", async () => {
+  it("returns 502 when writeDataFile returns null (write failed, no sha)", async () => {
     mockWrite.mockResolvedValue(null);
 
     const req = makePostRequest(SAMPLE_DATA);
     const res = await POST(req);
     const json = await res.json();
 
-    expect(res.status).toBe(200);
-    expect(json.ok).toBe(true);
-    expect(json.sha).toBeNull();
+    expect(res.status).toBe(502);
+    expect(json.error).toMatch(/SHA/);
+    expect(mockWrite).toHaveBeenCalledTimes(1);
   });
 });
