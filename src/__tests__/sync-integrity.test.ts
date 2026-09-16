@@ -2,14 +2,21 @@ import { describe, it, expect, vi, beforeAll, afterAll } from "vitest";
 import { NextRequest } from "next/server";
 
 vi.mock("@/lib/auth", () => ({ auth: vi.fn() }));
+vi.mock("@/lib/localdb", () => ({
+  readLocalData:  vi.fn(),
+  writeLocalData: vi.fn(),
+}));
 
 import { GET, POST } from "@/app/api/sync/route";
 import { auth } from "@/lib/auth";
+import { readLocalData, writeLocalData } from "@/lib/localdb";
 import type { Customer, Sale, Payment, Debt, SaleItem } from "@/lib/customers";
 import type { Product } from "@/lib/products";
 import type { AppData } from "@/lib/github";
 
-const mockAuth = auth as ReturnType<typeof vi.fn>;
+const mockAuth  = auth          as ReturnType<typeof vi.fn>;
+const mockRead  = readLocalData  as ReturnType<typeof vi.fn>;
+const mockWrite = writeLocalData as ReturnType<typeof vi.fn>;
 
 // ── Sabitler ──────────────────────────────────────────────────────────────────
 
@@ -71,7 +78,7 @@ function makePayments(customers: Customer[]): Payment[] {
 function makeSales(customers: Customer[], products: Product[]): Sale[] {
   const vatRates: (0 | 10 | 20)[] = [0, 10, 20];
   return Array.from({ length: COUNTS.sales }, (_, i) => {
-    const itemCount = (i % 3) + 1; // 1, 2 veya 3 ürün
+    const itemCount = (i % 3) + 1;
     const items: SaleItem[] = Array.from({ length: itemCount }, (_, j) => {
       const prod = products[(i * 3 + j) % products.length];
       return {
@@ -106,63 +113,38 @@ const payments  = makePayments(customers);
 const sales     = makeSales(customers, products);
 const inputData: AppData = { customers, products, debts, payments, sales };
 
-// ── Fetch interceptor ────────────────────────────────────────────────────────
-
-let capturedData: AppData | null = null;
-let putCallCount = 0;
-
-function setupFetchMock() {
-  vi.stubGlobal("fetch", async (url: unknown, opts?: RequestInit) => {
-    const urlStr = String(url);
-    const method = opts?.method ?? "GET";
-
-    if (method === "PUT" && urlStr.includes("data.json")) {
-      putCallCount++;
-      const body = JSON.parse(opts!.body as string);
-      capturedData = JSON.parse(
-        Buffer.from(body.content, "base64").toString("utf-8")
-      ) as AppData;
-      return new Response(
-        JSON.stringify({ content: { sha: "mock_sha_v1" } }),
-        { status: 200 }
-      );
-    }
-
-    if (method === "GET" && urlStr.includes("data.json")) {
-      if (capturedData) {
-        return new Response(
-          JSON.stringify({
-            content: Buffer.from(JSON.stringify(capturedData)).toString("base64"),
-            sha: "mock_sha_v1",
-          }),
-          { status: 200 }
-        );
-      }
-      return new Response("", { status: 404 });
-    }
-
-    // Migration fallback için eski ayrı dosyalar — yok
-    return new Response("", { status: 404 });
-  });
-}
-
 // ── Test suite ────────────────────────────────────────────────────────────────
 
 describe("Sync Integrity — 100 müşteri, 150 ürün, 100 borç, 110 tahsilat, 150 satış", () => {
+  // capturedData: writeLocalData'ya iletilen veriler
+  let capturedData: AppData | null = null;
+  let writeCallCount = 0;
+
   beforeAll(async () => {
-    capturedData = null;
-    putCallCount = 0;
+    capturedData  = null;
+    writeCallCount = 0;
+
     mockAuth.mockResolvedValue({ userId: "sim_user_1" });
-    setupFetchMock();
+
+    // writeLocalData çağrısını yakala — gönderilen verinin kopyasını sakla
+    mockWrite.mockImplementation((_userId: string, data: AppData) => {
+      writeCallCount++;
+      capturedData = JSON.parse(JSON.stringify(data)) as AppData;
+      return Promise.resolve();
+    });
+
+    // GET'in döneceği veriyi hazırla (round-trip testi için)
+    mockRead.mockImplementation(() => {
+      return Promise.resolve(capturedData);
+    });
 
     const req = new NextRequest("http://localhost/api/sync", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ ...inputData, sha: null }),
+      body: JSON.stringify(inputData),
     });
+
     const res = await POST(req);
-    // POST başarısız olursa suite'in geri kalanı zaten boş capturedData ile çalışır
-    // ve her test kendi hatasını açıkça gösterir
     if (res.status !== 200) {
       const err = await res.text();
       throw new Error(`POST /api/sync başarısız [${res.status}]: ${err}`);
@@ -170,7 +152,6 @@ describe("Sync Integrity — 100 müşteri, 150 ürün, 100 borç, 110 tahsilat,
   });
 
   afterAll(() => {
-    vi.unstubAllGlobals();
     vi.restoreAllMocks();
   });
 
@@ -199,148 +180,104 @@ describe("Sync Integrity — 100 müşteri, 150 ürün, 100 borç, 110 tahsilat,
   // ── ID bütünlüğü ──────────────────────────────────────────────────────────
 
   it("tüm müşteri ID'leri eksiksiz aktarılmalı", () => {
-    const expected = new Set(customers.map(c => c.id));
-    const actual   = new Set(capturedData?.customers.map(c => c.id) ?? []);
-    const missing  = [...expected].filter(id => !actual.has(id));
+    const sentIds  = new Set(capturedData?.customers.map(c => c.id) ?? []);
+    const inputIds = customers.map(c => c.id);
+    const missing  = inputIds.filter(id => !sentIds.has(id));
     expect(missing, `Eksik müşteri ID'leri: ${missing.join(", ")}`).toHaveLength(0);
   });
 
   it("tüm ürün ID'leri eksiksiz aktarılmalı", () => {
-    const expected = new Set(products.map(p => p.id));
-    const actual   = new Set(capturedData?.products.map(p => p.id) ?? []);
-    const missing  = [...expected].filter(id => !actual.has(id));
+    const sentIds  = new Set(capturedData?.products.map(p => p.id) ?? []);
+    const inputIds = products.map(p => p.id);
+    const missing  = inputIds.filter(id => !sentIds.has(id));
     expect(missing, `Eksik ürün ID'leri: ${missing.join(", ")}`).toHaveLength(0);
   });
 
   it("tüm borç ID'leri eksiksiz aktarılmalı", () => {
-    const expected = new Set(debts.map(d => d.id));
-    const actual   = new Set(capturedData?.debts.map(d => d.id) ?? []);
-    const missing  = [...expected].filter(id => !actual.has(id));
+    const sentIds  = new Set(capturedData?.debts.map(d => d.id) ?? []);
+    const inputIds = debts.map(d => d.id);
+    const missing  = inputIds.filter(id => !sentIds.has(id));
     expect(missing, `Eksik borç ID'leri: ${missing.join(", ")}`).toHaveLength(0);
   });
 
   it("tüm tahsilat ID'leri eksiksiz aktarılmalı", () => {
-    const expected = new Set(payments.map(p => p.id));
-    const actual   = new Set(capturedData?.payments.map(p => p.id) ?? []);
-    const missing  = [...expected].filter(id => !actual.has(id));
+    const sentIds  = new Set(capturedData?.payments.map(p => p.id) ?? []);
+    const inputIds = payments.map(p => p.id);
+    const missing  = inputIds.filter(id => !sentIds.has(id));
     expect(missing, `Eksik tahsilat ID'leri: ${missing.join(", ")}`).toHaveLength(0);
   });
 
   it("tüm satış ID'leri eksiksiz aktarılmalı", () => {
-    const expected = new Set(sales.map(s => s.id));
-    const actual   = new Set(capturedData?.sales.map(s => s.id) ?? []);
-    const missing  = [...expected].filter(id => !actual.has(id));
+    const sentIds  = new Set(capturedData?.sales.map(s => s.id) ?? []);
+    const inputIds = sales.map(s => s.id);
+    const missing  = inputIds.filter(id => !sentIds.has(id));
     expect(missing, `Eksik satış ID'leri: ${missing.join(", ")}`).toHaveLength(0);
   });
 
   // ── Referans bütünlüğü ────────────────────────────────────────────────────
 
   it("satışlardaki customerId'ler geçerli müşterilere işaret etmeli", () => {
-    const customerIds = new Set(capturedData?.customers.map(c => c.id) ?? []);
-    const invalid = (capturedData?.sales ?? []).filter(s => !customerIds.has(s.customerId));
-    expect(
-      invalid.map(s => `${s.id} → ${s.customerId}`),
-      "Geçersiz customerId referansı içeren satışlar"
-    ).toHaveLength(0);
+    const custIds = new Set(capturedData?.customers.map(c => c.id) ?? []);
+    const invalid = (capturedData?.sales ?? []).filter(s => !custIds.has(s.customerId));
+    expect(invalid).toHaveLength(0);
   });
 
   it("satışlardaki productId'ler geçerli ürünlere işaret etmeli", () => {
-    const productIds = new Set(capturedData?.products.map(p => p.id) ?? []);
-    const invalidItems = (capturedData?.sales ?? []).flatMap(s =>
-      s.items
-        .filter(item => !productIds.has(item.productId))
-        .map(item => `sale ${s.id} → product ${item.productId}`)
-    );
-    expect(invalidItems, "Geçersiz productId referansı içeren satış kalemleri").toHaveLength(0);
+    const prodIds = new Set(capturedData?.products.map(p => p.id) ?? []);
+    const invalid = (capturedData?.sales ?? [])
+      .flatMap(s => s.items)
+      .filter(it => !prodIds.has(it.productId));
+    expect(invalid).toHaveLength(0);
   });
 
-  // ── Atomiklik ─────────────────────────────────────────────────────────────
+  // ── Yazma sayısı ──────────────────────────────────────────────────────────
 
-  it("GitHub'a tam olarak 1 PUT isteği yapılmalı (atomik yazma)", () => {
-    expect(putCallCount).toBe(1);
+  it("writeLocalData tam olarak 1 kez çağrılmalı (atomik yazma)", () => {
+    expect(writeCallCount).toBe(1);
   });
 
-  // ── Round-trip (GET → yazılanla aynı) ────────────────────────────────────
+  // ── Round-trip doğruluğu ──────────────────────────────────────────────────
 
   it("GET ile geri okunan kayıt sayıları yazılanla eşleşmeli", async () => {
-    const res = await GET();
-    expect(res.status).toBe(200);
-    const json = await res.json();
-
-    expect(json.customers).toHaveLength(COUNTS.customers);
-    expect(json.products).toHaveLength(COUNTS.products);
-    expect(json.debts).toHaveLength(COUNTS.debts);
-    expect(json.payments).toHaveLength(COUNTS.payments);
-    expect(json.sales).toHaveLength(COUNTS.sales);
-    expect(json.sha).toBe("mock_sha_v1");
+    const res  = await GET();
+    const body = await res.json() as AppData;
+    expect(body.customers).toHaveLength(COUNTS.customers);
+    expect(body.products).toHaveLength(COUNTS.products);
+    expect(body.debts).toHaveLength(COUNTS.debts);
+    expect(body.payments).toHaveLength(COUNTS.payments);
+    expect(body.sales).toHaveLength(COUNTS.sales);
   });
 
   it("GET ile geri okunan veriler içerik olarak yazılanla birebir eşleşmeli", async () => {
-    const res = await GET();
-    const json = await res.json();
-
-    const sentIds   = (key: keyof AppData) => new Set((inputData[key] as { id: string }[]).map(r => r.id));
-    const gotIds    = (key: keyof AppData) => new Set((json[key] as { id: string }[]).map(r => r.id));
-    const diff      = (key: keyof AppData) => [...sentIds(key)].filter(id => !gotIds(key).has(id));
-
-    expect(diff("customers"), "Müşteri farkı").toHaveLength(0);
-    expect(diff("products"),  "Ürün farkı").toHaveLength(0);
-    expect(diff("debts"),     "Borç farkı").toHaveLength(0);
-    expect(diff("payments"),  "Tahsilat farkı").toHaveLength(0);
-    expect(diff("sales"),     "Satış farkı").toHaveLength(0);
+    const res  = await GET();
+    const body = await res.json() as AppData;
+    expect(body).toEqual(capturedData);
   });
 
-  // ── Tanı raporu ───────────────────────────────────────────────────────────
+  // ── Tanı ──────────────────────────────────────────────────────────────────
 
   it("Tanı: eksik kayıt varsa hangileri ve olası sebep raporla", () => {
-    const sections: string[] = [];
-
-    function diagnose(
-      label: string,
-      expected: string[],
-      actual: string[]
-    ) {
-      const actualSet = new Set(actual);
-      const missing   = expected.filter(id => !actualSet.has(id));
-      const extra     = [...actualSet].filter(id => !expected.includes(id));
-
-      if (missing.length === 0 && extra.length === 0) return;
-
-      const lines: string[] = [`[${label}]`];
+    const checks = [
+      { key: "customers", sent: capturedData?.customers.map(c => c.id) ?? [], input: customers.map(c => c.id) },
+      { key: "products",  sent: capturedData?.products.map(p => p.id)  ?? [], input: products.map(p => p.id)  },
+      { key: "debts",     sent: capturedData?.debts.map(d => d.id)     ?? [], input: debts.map(d => d.id)     },
+      { key: "payments",  sent: capturedData?.payments.map(p => p.id)  ?? [], input: payments.map(p => p.id)  },
+      { key: "sales",     sent: capturedData?.sales.map(s => s.id)     ?? [], input: sales.map(s => s.id)     },
+    ];
+    const violations: string[] = [];
+    for (const { key, sent, input } of checks) {
+      const sentSet = new Set(sent);
+      const missing = input.filter(id => !sentSet.has(id));
       if (missing.length > 0) {
-        const sample = missing.slice(0, 10).join(", ");
-        const more   = missing.length > 10 ? ` (+${missing.length - 10} daha)` : "";
-        lines.push(`  Eksik (${missing.length}): ${sample}${more}`);
-        lines.push(`  Olası sebep: SHA race condition (stale SHA → 409 → null → 422), payload truncation veya JSON serializasyon hatası`);
+        violations.push(key);
+        console.error(
+          `[${key}]\n  Eksik (${missing.length}): ${missing.slice(0, 10).join(", ")}${missing.length > 10 ? ` (+${missing.length - 10} daha)` : ""}\n  Olası sebep: payload truncation veya JSON serializasyon hatası`
+        );
       }
-      if (extra.length > 0) {
-        lines.push(`  Fazladan (${extra.length}): ${extra.slice(0, 5).join(", ")}`);
-      }
-      sections.push(lines.join("\n"));
     }
-
-    diagnose("customers", customers.map(c => c.id), capturedData?.customers.map(c => c.id) ?? []);
-    diagnose("products",  products.map(p => p.id),  capturedData?.products.map(p => p.id)  ?? []);
-    diagnose("debts",     debts.map(d => d.id),     capturedData?.debts.map(d => d.id)     ?? []);
-    diagnose("payments",  payments.map(p => p.id),  capturedData?.payments.map(p => p.id)  ?? []);
-    diagnose("sales",     sales.map(s => s.id),     capturedData?.sales.map(s => s.id)     ?? []);
-
-    if (sections.length > 0) {
-      const report = [
-        "",
-        "=== SYNC INTEGRITY RAPORU — VERİ KAYBI TESPİT EDİLDİ ===",
-        ...sections,
-        "===========================================================",
-        "",
-      ].join("\n");
-      console.error(report);
-    } else {
-      console.info("\n✓ Tüm kayıtlar eksiksiz aktarıldı. Veri kaybı yok.\n");
+    if (violations.length > 0) {
+      console.error(`\n=== SYNC INTEGRITY RAPORU — VERİ KAYBI TESPİT EDİLDİ ===\nİhlaller: ${violations.join(", ")}\n===========================================================\n`);
     }
-
-    expect(
-      sections,
-      "Veri bütünlüğü ihlali tespit edildi — yukarıdaki raporu inceleyin"
-    ).toHaveLength(0);
+    expect(violations, `Veri bütünlüğü ihlali: ${violations.join(", ")}`).toHaveLength(0);
   });
 });

@@ -106,6 +106,9 @@ interface DataContextValue {
   restoreFromDrive: () => Promise<void>;
   clearAllData:     () => Promise<void>;
 
+  backupToGitHub:    () => Promise<void>;
+  restoreFromGitHub: () => Promise<void>;
+
   canUndo:        boolean;
   undoLastAction: () => void;
 }
@@ -153,7 +156,6 @@ export function DataProvider({ children }: { children: React.ReactNode }) {
   const sessionRef = useRef(session);
   sessionRef.current = session;
 
-  const shaRef        = useRef<string | null>(null);
   const syncLockRef   = useRef(false);
 
   // P1-FIX: dirty tracking — seq snapshot captured BEFORE async, so concurrent mutations aren't lost
@@ -249,10 +251,8 @@ export function DataProvider({ children }: { children: React.ReactNode }) {
     // Capture seq BEFORE await — mutations that arrive mid-flight stay dirty
     const seqAtStart = mutationSeq.current;
     const { customers, products, sales, payments, debts } = stateRef.current;
-    const currentSha = shaRef.current;
-
     LOG.sync("syncToDriveInternal: start", {
-      seqAtStart, sha: currentSha,
+      seqAtStart,
       counts: { customers: customers.length, products: products.length, sales: sales.length, payments: payments.length, debts: debts.length },
     });
 
@@ -260,7 +260,7 @@ export function DataProvider({ children }: { children: React.ReactNode }) {
       const res = await fetch("/api/sync", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ customers, products, sales, payments, debts, sha: currentSha }),
+        body: JSON.stringify({ customers, products, sales, payments, debts }),
       });
 
       if (!res.ok) {
@@ -273,18 +273,10 @@ export function DataProvider({ children }: { children: React.ReactNode }) {
 
       const json = await res.json();
 
-      // P0-FIX: missing sha = GitHub write silently failed
-      if (!json.sha) {
-        LOG.error("syncToDriveInternal: response missing sha — write may have failed silently", json);
-        setSyncError("Sync doğrulanamadı (sha eksik). Verileriniz güvende — bir sonraki sync tekrar denenecek.");
-        return;
-      }
-
       // P1-FIX: only advance syncedSeq to seqAtStart, not current mutationSeq
       if (syncedSeq.current < seqAtStart) {
         syncedSeq.current = seqAtStart;
       }
-      shaRef.current = json.sha;
       // Clear dirty flag only if no new mutations arrived during this sync
       setIsDirty(mutationSeq.current > seqAtStart);
 
@@ -294,7 +286,6 @@ export function DataProvider({ children }: { children: React.ReactNode }) {
       setSyncError(null);
 
       LOG.sync("syncToDriveInternal: success", {
-        newSha: json.sha,
         seqSynced: seqAtStart,
         currentSeq: mutationSeq.current,
         pendingDirty: mutationSeq.current > seqAtStart,
@@ -332,21 +323,9 @@ export function DataProvider({ children }: { children: React.ReactNode }) {
         }
 
         const data = await res.json();
-        LOG.sync("mount: received GitHub data", {
-          sha: data.sha,
+        LOG.sync("mount: received local data", {
           counts: { customers: data.customers?.length, products: data.products?.length, sales: data.sales?.length, payments: data.payments?.length, debts: data.debts?.length },
         });
-
-        if (!data.sha) {
-          // sha=null means no file exists on GitHub yet (new account or after failed clearAllData)
-          // Keep local data and push it to GitHub to initialize the file
-          LOG.sync("mount: no GitHub file yet — keeping local data and initializing GitHub");
-          setIsLoading(false);
-          if (mutationSeq.current > 0) {
-            void syncToDriveInternal();
-          }
-          return;
-        }
 
         // P1-FIX: if local data was mutated after the last sync, protect it
         const lastSyncMs = (() => {
@@ -361,16 +340,12 @@ export function DataProvider({ children }: { children: React.ReactNode }) {
             lastMutationAt: new Date(lastMutationAt.current).toISOString(),
             lastSyncAt: lastSyncMs ? new Date(lastSyncMs).toISOString() : "never",
           });
-          // Capture fresh GitHub sha so our push resolves correctly
-          shaRef.current = data.sha ?? null;
           setIsLoading(false);
           void syncToDriveInternal();
           return;
         }
 
-        // GitHub is authoritative
-        shaRef.current = data.sha ?? null;
-
+        // Local DB is authoritative
         if (Array.isArray(data.customers)) { setCustomers(data.customers); lsWrite(LS.customers, data.customers); }
         if (Array.isArray(data.products))  { setProducts(data.products);   lsWrite(LS.products,  data.products); }
         if (Array.isArray(data.sales))     { setSales(data.sales);         lsWrite(LS.sales,     data.sales); }
@@ -401,7 +376,7 @@ export function DataProvider({ children }: { children: React.ReactNode }) {
         setDebts(prev   => prev.filter(d => cIds.has(d.customerId)));
 
         syncedSeq.current = mutationSeq.current;
-        LOG.sync("mount: applied GitHub data", { sha: data.sha });
+        LOG.sync("mount: applied local data");
         setIsLoading(false);
 
         // If orphan cleanup modified stock or removed records, push the corrected
@@ -437,24 +412,19 @@ export function DataProvider({ children }: { children: React.ReactNode }) {
         fetch("/api/sync", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ customers, products, sales, payments, debts, sha: shaRef.current }),
+          body: JSON.stringify({ customers, products, sales, payments, debts }),
           keepalive: true,
         }).catch(() => { /* best-effort — can't await on hidden */ });
       }
 
       if (document.visibilityState === "visible") {
-        // Refresh SHA after keepalive POST (response unavailable from keepalive)
-        // Also re-push if dirty — the keepalive may have failed (mobile network drop etc.)
-        LOG.sync("visibilitychange visible: refreshing SHA and checking dirty state");
+        // Re-push if dirty — the keepalive may have failed (mobile network drop etc.)
+        LOG.sync("visibilitychange visible: checking dirty state after keepalive");
         fetch("/api/sync")
           .then(r => r.ok ? r.json() : null)
           .then(json => {
-            if (json?.sha !== undefined) {
-              shaRef.current = json.sha;
-              LOG.sync("visibilitychange visible: SHA refreshed", { sha: json.sha });
-            }
             // Retry push if keepalive failed
-            if (mutationSeq.current > syncedSeq.current) {
+            if (json && mutationSeq.current > syncedSeq.current) {
               LOG.warn("visibilitychange visible: dirty data detected — retrying sync (keepalive may have failed)");
               void syncToDriveInternal();
             }
@@ -684,9 +654,8 @@ export function DataProvider({ children }: { children: React.ReactNode }) {
         return;
       }
       const data = await res.json();
-      LOG.sync("restoreFromDrive: received", { sha: data.sha, counts: { customers: data.customers?.length, products: data.products?.length } });
+      LOG.sync("restoreFromDrive: received", { counts: { customers: data.customers?.length, products: data.products?.length } });
 
-      shaRef.current = data.sha ?? null;
       if (Array.isArray(data.customers)) { setCustomers(data.customers); lsWrite(LS.customers, data.customers); }
       if (Array.isArray(data.products))  { setProducts(data.products);   lsWrite(LS.products,  data.products); }
       if (Array.isArray(data.sales))     { setSales(data.sales);         lsWrite(LS.sales,     data.sales); }
@@ -721,32 +690,28 @@ export function DataProvider({ children }: { children: React.ReactNode }) {
         const res = await fetch("/api/sync", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ customers: [], products: [], sales: [], payments: [], debts: [], sha: shaRef.current }),
+          body: JSON.stringify({ customers: [], products: [], sales: [], payments: [], debts: [] }),
         });
         if (res.ok) {
           const json = await res.json().catch(() => null);
-          if (json?.sha) {
-            shaRef.current = json.sha;
+          if (json?.ok) {
             syncedSeq.current = mutationSeq.current;
             const now = new Date();
             setLastSyncTime(now);
             try { localStorage.setItem(LS.lastSync, now.toISOString()); } catch { /* */ }
           } else {
             // Write succeeded but sha missing — keep data dirty so next auto-sync retries
-            LOG.error("clearAllData: remote wipe response missing sha — will retry on next sync");
+            LOG.error("clearAllData: remote wipe response not ok — will retry on next sync");
             setSyncError("Veri silme doğrulanamadı. Bir sonraki senkronizasyonda tekrar denenecek.");
           }
           LOG.warn("clearAllData: remote data wiped", { sha: json?.sha });
         } else {
           // Remote wipe failed — data is locally empty but remotely still has old data
-          // Reset shaRef to null so next sync writes without a stale sha
-          shaRef.current = null;
-          LOG.error(`clearAllData: remote wipe failed HTTP ${res.status} — sha reset to null`);
+          LOG.error(`clearAllData: remote wipe failed HTTP ${res.status}`);
           setSyncError(`Uzak veri silinemedi (HTTP ${res.status}). Sonraki senkronizasyonda tekrar denenecek.`);
         }
       } catch (e) {
-        shaRef.current = null;
-        LOG.error("clearAllData: remote wipe error — sha reset to null", e);
+        LOG.error("clearAllData: remote wipe error", e);
         setSyncError("Ağ hatası — uzak veri silinemedi. Sonraki senkronizasyonda tekrar denenecek.");
       }
     }
@@ -768,6 +733,59 @@ export function DataProvider({ children }: { children: React.ReactNode }) {
     );
   }, [sales, payments, debts]);
 
+
+  const backupToGitHub = useCallback(async () => {
+    if (isSyncing) return;
+    setIsSyncing(true);
+    setSyncError(null);
+    try {
+      const { customers, products, sales, payments, debts } = stateRef.current;
+      const res = await fetch("/api/backup", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ customers, products, sales, payments, debts }),
+      });
+      if (!res.ok) {
+        const txt = await res.text().catch(() => "");
+        setSyncError(`GitHub yedekleme başarısız (HTTP ${res.status}): ${txt}`);
+        LOG.error("backupToGitHub: failed", { status: res.status });
+      } else {
+        const now = new Date();
+        setLastSyncTime(now);
+        try { localStorage.setItem(LS.lastSync, now.toISOString()); } catch { /* */ }
+        setSyncError(null);
+        LOG.sync("backupToGitHub: success");
+      }
+    } catch (e) {
+      setSyncError("GitHub bağlantı hatası.");
+      LOG.error("backupToGitHub: error", e);
+    } finally {
+      setIsSyncing(false);
+    }
+  }, [isSyncing]);
+
+  const restoreFromGitHub = useCallback(async () => {
+    setIsLoading(true);
+    setSyncError(null);
+    try {
+      const res = await fetch("/api/backup");
+      if (!res.ok) {
+        const txt = await res.text().catch(() => "");
+        setSyncError(`GitHub geri yükleme başarısız (HTTP ${res.status}): ${txt}`);
+        LOG.error("restoreFromGitHub: failed", { status: res.status });
+        return;
+      }
+      // Backup route wrote data to local DB — now reload from local DB
+      await restoreFromDrive();
+      LOG.sync("restoreFromGitHub: restored and reloaded from local DB");
+    } catch (e) {
+      setSyncError("GitHub geri yükleme sırasında hata oluştu.");
+      LOG.error("restoreFromGitHub: error", e);
+    } finally {
+      setIsLoading(false);
+    }
+  }, [restoreFromDrive]);
+
   const value = useMemo<DataContextValue>(() => ({
     customers, products, sales, payments, debts,
     isLoading, isSyncing, lastSyncTime, syncError,
@@ -779,6 +797,7 @@ export function DataProvider({ children }: { children: React.ReactNode }) {
     getCustomerTotals, getCustomerFeed,
     isDirty,
     syncToDrive, restoreFromDrive, clearAllData,
+    backupToGitHub, restoreFromGitHub,
     canUndo, undoLastAction,
   }), [
     customers, products, sales, payments, debts,
@@ -791,6 +810,7 @@ export function DataProvider({ children }: { children: React.ReactNode }) {
     getCustomerTotals, getCustomerFeed,
     isDirty,
     syncToDrive, restoreFromDrive, clearAllData,
+    backupToGitHub, restoreFromGitHub,
     canUndo, undoLastAction,
   ]);
 
