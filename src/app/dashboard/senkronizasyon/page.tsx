@@ -342,7 +342,124 @@ export default function SenkronizasyonPage() {
             </>
           )}
         </button>
+
+        {/* ── JSON Dosyasından İçe Aktar ── */}
+        <div className="mt-4 border-t border-gray-100 dark:border-gray-800 pt-4">
+          <p className="text-xs font-semibold text-gray-400 uppercase tracking-wide mb-3">Yerel Dosyadan Geri Yükle</p>
+
+          <label className="block w-full cursor-pointer">
+            <div className="border-2 border-dashed border-gray-200 dark:border-gray-700 rounded-2xl px-4 py-5 text-center hover:border-green-400 transition-colors">
+              <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor" className="w-6 h-6 mx-auto mb-2 text-gray-400">
+                <path strokeLinecap="round" strokeLinejoin="round" d="M19.5 14.25v-2.625a3.375 3.375 0 0 0-3.375-3.375h-1.5A1.125 1.125 0 0 1 13.5 7.125v-1.5a3.375 3.375 0 0 0-3.375-3.375H8.25m6.75 12-3-3m0 0-3 3m3-3v6m-1.5-15H5.625c-.621 0-1.125.504-1.125 1.125v17.25c0 .621.504 1.125 1.125 1.125h12.75c.621 0 1.125-.504 1.125-1.125V11.25a9 9 0 0 0-9-9Z" />
+              </svg>
+              <p className="text-sm text-gray-500 dark:text-gray-400">
+                {importFile ? importFile.name : "JSON dosyası seçin"}
+              </p>
+              <p className="text-xs text-gray-400 mt-1">.json · maks 10 MB</p>
+            </div>
+            <input type="file" accept=".json,application/json" className="hidden" onChange={handleFileChange} />
+          </label>
+
+          {importError && (
+            <div className="mt-3 flex items-start gap-2 bg-red-50 border border-red-200 rounded-xl px-3 py-2.5">
+              <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={2} stroke="#DC2626" className="w-4 h-4 shrink-0 mt-0.5">
+                <path strokeLinecap="round" strokeLinejoin="round" d="M12 9v3.75m9-.75a9 9 0 1 1-18 0 9 9 0 0 1 18 0Zm-9 3.75h.008v.008H12v-.008Z" />
+              </svg>
+              <span className="text-xs text-red-700">{importError}</span>
+            </div>
+          )}
+
+          {importPreview && (
+            <div className="mt-3 bg-green-50 dark:bg-green-900/20 border border-green-200 dark:border-green-800 rounded-xl px-4 py-3">
+              <p className="text-xs font-semibold text-green-800 dark:text-green-300 mb-2">Dosya içeriği:</p>
+              <div className="grid grid-cols-2 gap-1 text-xs text-green-700 dark:text-green-400">
+                <span>Müşteriler: <b>{importPreview.customers}</b></span>
+                <span>Ürünler: <b>{importPreview.products}</b></span>
+                <span>Satışlar: <b>{importPreview.sales}</b></span>
+                <span>Tahsilatlar: <b>{importPreview.payments}</b></span>
+                <span>Borçlar: <b>{importPreview.debts}</b></span>
+              </div>
+            </div>
+          )}
+
+          {importStatus === "success" && (
+            <div className="mt-3 flex items-center gap-2 bg-green-50 border border-green-200 rounded-xl px-3 py-2.5">
+              <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={2} stroke="#16A34A" className="w-4 h-4">
+                <path strokeLinecap="round" strokeLinejoin="round" d="m4.5 12.75 6 6 9-13.5" />
+              </svg>
+              <span className="text-xs text-green-700 font-medium">Veriler başarıyla içe aktarıldı.</span>
+            </div>
+          )}
+          {importStatus === "error" && (
+            <div className="mt-3 flex items-center gap-2 bg-red-50 border border-red-200 rounded-xl px-3 py-2.5">
+              <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={2} stroke="#DC2626" className="w-4 h-4">
+                <path strokeLinecap="round" strokeLinejoin="round" d="M6 18 18 6M6 6l12 12" />
+              </svg>
+              <span className="text-xs text-red-700">İçe aktarma başarısız oldu.</span>
+            </div>
+          )}
+
+          <button
+            onClick={() => setShowImportConfirm(true)}
+            disabled={!importPreview || isImporting}
+            className="mt-4 w-full py-4 rounded-2xl text-white font-semibold text-base flex items-center justify-center gap-2.5 transition-opacity disabled:opacity-40 disabled:cursor-not-allowed"
+            style={{ background: "#16A34A" }}
+          >
+            {isImporting ? (
+              <>
+                <svg className="w-5 h-5 animate-spin" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+                  <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+                  <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v4l3-3-3-3v4a8 8 0 100 16v-4l-3 3 3 3v-4a8 8 0 01-8-8z" />
+                </svg>
+                İçe Aktarılıyor…
+              </>
+            ) : (
+              <>
+                <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={2} stroke="currentColor" className="w-5 h-5">
+                  <path strokeLinecap="round" strokeLinejoin="round" d="M3 16.5v2.25A2.25 2.25 0 0 0 5.25 21h13.5A2.25 2.25 0 0 0 21 18.75V16.5m-13.5-9L12 3m0 0 4.5 4.5M12 3v13.5" />
+                </svg>
+                JSON Dosyasından İçe Aktar
+              </>
+            )}
+          </button>
+        </div>
       </main>
+
+
+      {/* Import confirmation modal */}
+      {showImportConfirm && (
+        <div className="fixed inset-0 bg-black/40 flex items-end sm:items-center justify-center z-50 px-4 pb-6 sm:pb-0">
+          <div className="bg-white rounded-2xl w-full max-w-sm p-6 shadow-xl">
+            <h2 className="text-base font-semibold text-gray-900 mb-2">Dosyadan İçe Aktar</h2>
+            <p className="text-sm text-gray-500 mb-4">
+              Mevcut verilerinizin üzerine seçilen dosyadaki veriler yazılacak. İşlem sonrası geri alabilirsiniz.
+            </p>
+            {isDirty && (
+              <div className="mb-4 flex items-start gap-2 bg-amber-50 border border-amber-200 rounded-xl px-3 py-2.5">
+                <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={2} stroke="#B45309" className="w-4 h-4 shrink-0 mt-0.5">
+                  <path strokeLinecap="round" strokeLinejoin="round" d="M12 9v3.75m-9.303 3.376c-.866 1.5.217 3.374 1.948 3.374h14.71c1.73 0 2.813-1.874 1.948-3.374L13.949 3.378c-.866-1.5-3.032-1.5-3.898 0L2.697 16.126ZM12 15.75h.007v.008H12v-.008Z" />
+                </svg>
+                <span className="text-xs text-amber-800">Yedeklenmemiş değişiklikleriniz var.</span>
+              </div>
+            )}
+            <div className="flex gap-3">
+              <button
+                onClick={() => setShowImportConfirm(false)}
+                className="flex-1 py-3 rounded-xl text-sm font-medium text-gray-600 border border-gray-200"
+              >
+                İptal
+              </button>
+              <button
+                onClick={handleImport}
+                className="flex-1 py-3 rounded-xl text-sm font-semibold text-white"
+                style={{ background: "#16A34A" }}
+              >
+                İçe Aktar
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* Restore confirmation modal */}
       {showRestoreConfirm && (
