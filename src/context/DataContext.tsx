@@ -156,6 +156,10 @@ export function DataProvider({ children }: { children: React.ReactNode }) {
   const sessionRef = useRef(session);
   sessionRef.current = session;
 
+  // Always-current LS — assigned at render so closures can call lsRef.current for the right user's keys
+  const lsRef = useRef(LS);
+  lsRef.current = LS;
+
   const syncLockRef   = useRef(false);
 
   // P1-FIX: dirty tracking — seq snapshot captured BEFORE async, so concurrent mutations aren't lost
@@ -170,7 +174,7 @@ export function DataProvider({ children }: { children: React.ReactNode }) {
   function markMutation() {
     mutationSeq.current += 1;
     lastMutationAt.current = Date.now();
-    try { localStorage.setItem(LS.lastMutation, String(lastMutationAt.current)); } catch { /* */ }
+    try { localStorage.setItem(lsRef.current.lastMutation, String(lastMutationAt.current)); } catch { /* */ }
     setIsDirty(true);
   }
 
@@ -178,7 +182,7 @@ export function DataProvider({ children }: { children: React.ReactNode }) {
     markMutation();
     setCustomers(prev => {
       const next = fn(prev);
-      if (!lsWrite(LS.customers, next)) LOG.warn("setC: localStorage write failed — data in memory only");
+      if (!lsWrite(lsRef.current.customers, next)) LOG.warn("setC: localStorage write failed — data in memory only");
       return next;
     });
   // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -188,7 +192,7 @@ export function DataProvider({ children }: { children: React.ReactNode }) {
     markMutation();
     setProducts(prev => {
       const next = fn(prev);
-      if (!lsWrite(LS.products, next)) LOG.warn("setP: localStorage write failed — data in memory only");
+      if (!lsWrite(lsRef.current.products, next)) LOG.warn("setP: localStorage write failed — data in memory only");
       return next;
     });
   // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -198,7 +202,7 @@ export function DataProvider({ children }: { children: React.ReactNode }) {
     markMutation();
     setSales(prev => {
       const next = fn(prev);
-      if (!lsWrite(LS.sales, next)) LOG.warn("setS: localStorage write failed — data in memory only");
+      if (!lsWrite(lsRef.current.sales, next)) LOG.warn("setS: localStorage write failed — data in memory only");
       return next;
     });
   // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -208,7 +212,7 @@ export function DataProvider({ children }: { children: React.ReactNode }) {
     markMutation();
     setPayments(prev => {
       const next = fn(prev);
-      if (!lsWrite(LS.payments, next)) LOG.warn("setPay: localStorage write failed — data in memory only");
+      if (!lsWrite(lsRef.current.payments, next)) LOG.warn("setPay: localStorage write failed — data in memory only");
       return next;
     });
   // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -218,7 +222,7 @@ export function DataProvider({ children }: { children: React.ReactNode }) {
     markMutation();
     setDebts(prev => {
       const next = fn(prev);
-      if (!lsWrite(LS.debts, next)) LOG.warn("setD: localStorage write failed — data in memory only");
+      if (!lsWrite(lsRef.current.debts, next)) LOG.warn("setD: localStorage write failed — data in memory only");
       return next;
     });
   // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -276,7 +280,7 @@ export function DataProvider({ children }: { children: React.ReactNode }) {
 
       const now = new Date();
       setLastSyncTime(now);
-      try { localStorage.setItem(LS.lastSync, now.toISOString()); } catch { /* */ }
+      try { localStorage.setItem(lsRef.current.lastSync, now.toISOString()); } catch { /* */ }
       setSyncError(null);
 
       LOG.sync("syncToDriveInternal: success", {
@@ -322,9 +326,9 @@ export function DataProvider({ children }: { children: React.ReactNode }) {
 
     // Restore user-scoped timestamps (these use LS with correct userId, unlike the top-level IIFE)
     try {
-      const rawSync = localStorage.getItem(LS.lastSync);
+      const rawSync = localStorage.getItem(lsRef.current.lastSync);
       if (rawSync) setLastSyncTime(new Date(rawSync));
-      const rawMut = localStorage.getItem(LS.lastMutation);
+      const rawMut = localStorage.getItem(lsRef.current.lastMutation);
       if (rawMut) lastMutationAt.current = parseInt(rawMut, 10);
     } catch { /* */ }
 
@@ -349,7 +353,7 @@ export function DataProvider({ children }: { children: React.ReactNode }) {
         // P1-FIX: if local data was mutated after the last sync, protect it
         const lastSyncMs = (() => {
           try {
-            const raw = localStorage.getItem(LS.lastSync);
+            const raw = localStorage.getItem(lsRef.current.lastSync);
             return raw ? new Date(raw).getTime() : 0;
           } catch { return 0; }
         })();
@@ -372,11 +376,11 @@ export function DataProvider({ children }: { children: React.ReactNode }) {
           payments:  Array.isArray(data.payments)  ? data.payments  as Payment[]  : [],
           debts:     Array.isArray(data.debts)     ? data.debts     as Debt[]     : [],
         };
-        setCustomers(mounted.customers); lsWrite(LS.customers, mounted.customers);
-        setProducts(mounted.products);   lsWrite(LS.products,  mounted.products);
-        setSales(mounted.sales);         lsWrite(LS.sales,     mounted.sales);
-        setPayments(mounted.payments);   lsWrite(LS.payments,  mounted.payments);
-        setDebts(mounted.debts);         lsWrite(LS.debts,     mounted.debts);
+        setCustomers(mounted.customers); lsWrite(lsRef.current.customers, mounted.customers);
+        setProducts(mounted.products);   lsWrite(lsRef.current.products,  mounted.products);
+        setSales(mounted.sales);         lsWrite(lsRef.current.sales,     mounted.sales);
+        setPayments(mounted.payments);   lsWrite(lsRef.current.payments,  mounted.payments);
+        setDebts(mounted.debts);         lsWrite(lsRef.current.debts,     mounted.debts);
 
         // Clean orphan records (customer deleted on another device)
         // Also restore product stock for any sales that get orphaned
@@ -520,11 +524,11 @@ export function DataProvider({ children }: { children: React.ReactNode }) {
     setSales(snap.sales);
     setPayments(snap.payments);
     setDebts(snap.debts);
-    lsWrite(LS.customers, snap.customers);
-    lsWrite(LS.products,  snap.products);
-    lsWrite(LS.sales,     snap.sales);
-    lsWrite(LS.payments,  snap.payments);
-    lsWrite(LS.debts,     snap.debts);
+    lsWrite(lsRef.current.customers, snap.customers);
+    lsWrite(lsRef.current.products,  snap.products);
+    lsWrite(lsRef.current.sales,     snap.sales);
+    lsWrite(lsRef.current.payments,  snap.payments);
+    lsWrite(lsRef.current.debts,     snap.debts);
     markMutation();
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
@@ -690,17 +694,17 @@ export function DataProvider({ children }: { children: React.ReactNode }) {
         payments:  Array.isArray(data.payments)  ? data.payments  : [],
         debts:     Array.isArray(data.debts)     ? data.debts     : [],
       };
-      setCustomers(restored.customers); lsWrite(LS.customers, restored.customers);
-      setProducts(restored.products);   lsWrite(LS.products,  restored.products);
-      setSales(restored.sales);         lsWrite(LS.sales,     restored.sales);
-      setPayments(restored.payments);   lsWrite(LS.payments,  restored.payments);
-      setDebts(restored.debts);         lsWrite(LS.debts,     restored.debts);
+      setCustomers(restored.customers); lsWrite(lsRef.current.customers, restored.customers);
+      setProducts(restored.products);   lsWrite(lsRef.current.products,  restored.products);
+      setSales(restored.sales);         lsWrite(lsRef.current.sales,     restored.sales);
+      setPayments(restored.payments);   lsWrite(lsRef.current.payments,  restored.payments);
+      setDebts(restored.debts);         lsWrite(lsRef.current.debts,     restored.debts);
 
       syncedSeq.current = mutationSeq.current;
       setIsDirty(false);
       const now = new Date();
       setLastSyncTime(now);
-      try { localStorage.setItem(LS.lastSync, now.toISOString()); } catch { /* */ }
+      try { localStorage.setItem(lsRef.current.lastSync, now.toISOString()); } catch { /* */ }
       LOG.sync("restoreFromDrive: complete");
     } catch (e) {
       LOG.error("restoreFromDrive: error", e);
@@ -713,11 +717,11 @@ export function DataProvider({ children }: { children: React.ReactNode }) {
   // ── Clear all data ────────────────────────────────────────────────────────
   const clearAllData = useCallback(async () => {
     LOG.warn("clearAllData: wiping all local and remote data");
-    setCustomers([]); lsWrite(LS.customers, []);
-    setProducts([]);  lsWrite(LS.products,  []);
-    setSales([]);     lsWrite(LS.sales,     []);
-    setPayments([]);  lsWrite(LS.payments,  []);
-    setDebts([]);     lsWrite(LS.debts,     []);
+    setCustomers([]); lsWrite(lsRef.current.customers, []);
+    setProducts([]);  lsWrite(lsRef.current.products,  []);
+    setSales([]);     lsWrite(lsRef.current.sales,     []);
+    setPayments([]);  lsWrite(lsRef.current.payments,  []);
+    setDebts([]);     lsWrite(lsRef.current.debts,     []);
     // Use markMutation so lastMutationAt timestamp stays consistent
     markMutation();
     if (sessionRef.current?.userId) {
@@ -734,7 +738,7 @@ export function DataProvider({ children }: { children: React.ReactNode }) {
             setIsDirty(false);
             const now = new Date();
             setLastSyncTime(now);
-            try { localStorage.setItem(LS.lastSync, now.toISOString()); } catch { /* */ }
+            try { localStorage.setItem(lsRef.current.lastSync, now.toISOString()); } catch { /* */ }
           } else {
             // Write succeeded but response not ok — keep data dirty so next auto-sync retries
             LOG.error("clearAllData: remote wipe response not ok — will retry on next sync");
@@ -788,7 +792,7 @@ export function DataProvider({ children }: { children: React.ReactNode }) {
       } else {
         const now = new Date();
         setLastSyncTime(now);
-        try { localStorage.setItem(LS.lastSync, now.toISOString()); } catch { /* */ }
+        try { localStorage.setItem(lsRef.current.lastSync, now.toISOString()); } catch { /* */ }
         setSyncError(null);
         LOG.sync("backupToGitHub: success");
       }
