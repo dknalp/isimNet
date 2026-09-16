@@ -401,18 +401,31 @@ export function DataProvider({ children }: { children: React.ReactNode }) {
             return { ...p, stock: restored, updatedAt: now };
           }));
         }
-        setSales(prev   => prev.filter(s => cIds.has(s.customerId)));
-        setPayments(prev => prev.filter(p => cIds.has(p.customerId)));
-        setDebts(prev   => prev.filter(d => cIds.has(d.customerId)));
+        const cleanSales    = mounted.sales.filter(s    => cIds.has(s.customerId));
+        const cleanPayments = mounted.payments.filter(p  => cIds.has(p.customerId));
+        const cleanDebts    = mounted.debts.filter(d    => cIds.has(d.customerId));
+        setSales(cleanSales);
+        setPayments(cleanPayments);
+        setDebts(cleanDebts);
+
+        // If orphan cleanup ran, write corrected data to LS immediately so a crash
+        // before syncToDriveInternal completes doesn't revert the cleanup
+        if (hadOrphans) {
+          lsWrite(lsRef.current.sales,    cleanSales);
+          lsWrite(lsRef.current.payments, cleanPayments);
+          lsWrite(lsRef.current.debts,    cleanDebts);
+          // Note: products LS written after React batches the setProducts updater —
+          // syncToDriveInternal will push the corrected products server-side
+        }
 
         syncedSeq.current = mutationSeq.current;
         LOG.sync("mount: applied local data");
         setIsLoading(false);
 
         // If orphan cleanup modified stock or removed records, push the corrected
-        // data back to GitHub so it doesn't revert on next device load.
+        // data back to server so it doesn't revert on next device load.
         if (hadOrphans) {
-          LOG.warn("mount: orphan cleanup changed data — pushing corrected state to GitHub");
+          LOG.warn("mount: orphan cleanup changed data — pushing corrected state to server");
           mutationSeq.current += 1;
           void syncToDriveInternal();
         }
