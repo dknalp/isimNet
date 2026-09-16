@@ -27,7 +27,7 @@ export default function SenkronizasyonPage() {
   const { data: session } = useSession();
   const {
     customers, products, sales, payments, debts,
-    isSyncing, lastSyncTime, syncError,
+    isSyncing, lastSyncTime, syncError, isDirty,
     syncToDrive, restoreFromDrive,
   } = useData();
 
@@ -246,9 +246,17 @@ export default function SenkronizasyonPage() {
         <div className="fixed inset-0 bg-black/40 flex items-end sm:items-center justify-center z-50 px-4 pb-6 sm:pb-0">
           <div className="bg-white rounded-2xl w-full max-w-sm p-6 shadow-xl">
             <h2 className="text-base font-semibold text-gray-900 mb-2">GitHub&apos;dan Geri Yükle</h2>
-            <p className="text-sm text-gray-500 mb-6">
+            <p className="text-sm text-gray-500 mb-4">
               Mevcut verilerinizin üzerine GitHub&apos;daki veriler yazılacak. Bu işlem geri alınamaz.
             </p>
+            {isDirty && (
+              <div className="mb-4 flex items-start gap-2 bg-amber-50 border border-amber-200 rounded-xl px-3 py-2.5">
+                <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={2} stroke="#B45309" className="w-4 h-4 shrink-0 mt-0.5">
+                  <path strokeLinecap="round" strokeLinejoin="round" d="M12 9v3.75m-9.303 3.376c-.866 1.5.217 3.374 1.948 3.374h14.71c1.73 0 2.813-1.874 1.948-3.374L13.949 3.378c-.866-1.5-3.032-1.5-3.898 0L2.697 16.126ZM12 15.75h.007v.008H12v-.008Z" />
+                </svg>
+                <span className="text-xs text-amber-800">Yedeklenmemiş değişiklikleriniz var. Geri yükleme bu değişiklikleri silecek.</span>
+              </div>
+            )}
             <div className="flex gap-3">
               <button
                 onClick={() => setShowRestoreConfirm(false)}

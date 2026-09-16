@@ -74,6 +74,7 @@ interface DataContextValue {
   isSyncing:    boolean;
   lastSyncTime: Date | null;
   syncError:    string | null;
+  isDirty:      boolean;
 
   addCustomer:    (data: NewCustomerFormData) => void;
   updateCustomer: (id: string, data: Partial<NewCustomerFormData>) => void;
@@ -125,6 +126,7 @@ export function DataProvider({ children }: { children: React.ReactNode }) {
   const [isSyncing,    setIsSyncing]    = useState(false);
   const [lastSyncTime, setLastSyncTime] = useState<Date | null>(null);
   const [syncError,    setSyncError]    = useState<string | null>(null);
+  const [isDirty,      setIsDirty]      = useState(false);
 
   // ── Undo buffer ─────────────────────────────────────────────────────────
   type UndoSnapshot = {
@@ -742,6 +744,7 @@ export function DataProvider({ children }: { children: React.ReactNode }) {
     addPayment, updatePayment, deletePayment,
     addDebt, updateDebt, deleteDebt,
     getCustomerTotals, getCustomerFeed,
+    isDirty: mutationSeq.current > syncedSeq.current,
     syncToDrive, restoreFromDrive, clearAllData,
     canUndo, undoLastAction,
   }), [
@@ -753,6 +756,7 @@ export function DataProvider({ children }: { children: React.ReactNode }) {
     addPayment, updatePayment, deletePayment,
     addDebt, updateDebt, deleteDebt,
     getCustomerTotals, getCustomerFeed,
+    isDirty: mutationSeq.current > syncedSeq.current,
     syncToDrive, restoreFromDrive, clearAllData,
     canUndo, undoLastAction,
   ]);

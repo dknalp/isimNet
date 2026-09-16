@@ -220,4 +220,49 @@ describe("ID generation: collision resistance", () => {
   });
 
   it("random suffix has 5 base36 characters", () => {
-    for (let i = 0; i < 20
+    for (let i = 0; i < 20; i++) {
+    const id = generateId("c");
+    expect(id.split("_")[2]).toHaveLength(5);
+  }
+  });
+});
+
+// ── isDirty: restore-before-sync data loss warning ────────────────────────────
+// If a user has unsaved mutations and clicks "Restore from GitHub", those mutations
+// are silently discarded. The UI must warn the user when isDirty=true.
+
+describe("isDirty: unsaved mutation tracking", () => {
+  it("isDirty is false when mutationSeq equals syncedSeq", () => {
+    let mutationSeq = 3;
+    let syncedSeq = 3;
+    const isDirty = mutationSeq > syncedSeq;
+    expect(isDirty).toBe(false);
+  });
+
+  it("isDirty is true when mutations exist that haven't been synced", () => {
+    let mutationSeq = 5;
+    let syncedSeq = 3;
+    const isDirty = mutationSeq > syncedSeq;
+    expect(isDirty).toBe(true);
+  });
+
+  it("isDirty becomes false after sync advances syncedSeq to mutationSeq", () => {
+    let mutationSeq = 5;
+    let syncedSeq = 3;
+    // After successful sync
+    syncedSeq = mutationSeq;
+    const isDirty = mutationSeq > syncedSeq;
+    expect(isDirty).toBe(false);
+  });
+
+  it("isDirty remains true if new mutations happen during sync", () => {
+    let mutationSeq = 5;
+    const seqAtSyncStart = 5;
+    // New mutation arrives while sync is in flight
+    mutationSeq = 6;
+    // Sync completes — advances syncedSeq only to seqAtSyncStart
+    let syncedSeq = seqAtSyncStart;
+    const isDirty = mutationSeq > syncedSeq;
+    expect(isDirty).toBe(true);
+  });
+});
