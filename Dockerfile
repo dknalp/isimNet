@@ -20,7 +20,7 @@ RUN addgroup --system --gid 1001 nodejs \
 
 ENV NODE_ENV=production
 ENV HOSTNAME=0.0.0.0
-ENV PORT=3000
+ENV PORT=6784
 ENV DATA_DIR=/data
 
 COPY --from=builder --chown=nextjs:nodejs /app/.next/standalone ./
@@ -30,9 +30,9 @@ COPY --from=builder --chown=nextjs:nodejs /app/public ./public
 USER nextjs
 
 VOLUME ["/data"]
-EXPOSE 3000
+EXPOSE 6784
 
 HEALTHCHECK --interval=30s --timeout=5s --start-period=15s --retries=3 \
-  CMD wget -qO- http://localhost:3000/api/health || exit 1
+  CMD wget -qO- http://localhost:6784/api/health || exit 1
 
 CMD ["node", "server.js"]

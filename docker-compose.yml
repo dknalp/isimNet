@@ -2,16 +2,17 @@ services:
   app:
     build: .
     ports:
-      - "6784:3000"
+      - "6784:6784"
     volumes:
       - isimnet_data:/data
     env_file: .env
     environment:
       - HOSTNAME=0.0.0.0
+      - PORT=6784
       - DATA_DIR=/data
     restart: unless-stopped
     healthcheck:
-      test: ["CMD", "wget", "-qO-", "http://localhost:3000/api/health"]
+      test: ["CMD", "wget", "-qO-", "http://localhost:6784/api/health"]
       interval: 30s
       timeout: 5s
       start_period: 15s
