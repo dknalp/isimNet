@@ -10,6 +10,7 @@ import {
   ActivityItem, buildActivityFeed,
 } from "@/lib/customers";
 import { Product, NewProductFormData } from "@/lib/products";
+import type { AppData } from "@/lib/github";
 
 // ── LocalStorage keys (namespaced per user to prevent cross-user data leakage) ──
 function makeLS(uid: string) {
@@ -110,6 +111,7 @@ interface DataContextValue {
   syncToDrive:      () => Promise<void>;
   restoreFromDrive: () => Promise<void>;
   clearAllData:     () => Promise<void>;
+  importFromFile:  (data: AppData) => Promise<void>;
 
   backupToGitHub:    () => Promise<void>;
   restoreFromGitHub: () => Promise<void>;
@@ -860,6 +862,19 @@ export function DataProvider({ children }: { children: React.ReactNode }) {
     }
   }, [restoreFromDrive]);
 
+  const importFromFile = useCallback(async (raw: AppData) => {
+    captureUndo();
+    setCustomers(raw.customers);   lsWrite(lsRef.current.customers, raw.customers);
+    setProducts(raw.products);     lsWrite(lsRef.current.products,  raw.products);
+    setSales(raw.sales);           lsWrite(lsRef.current.sales,     raw.sales);
+    setPayments(raw.payments);     lsWrite(lsRef.current.payments,  raw.payments);
+    setDebts(raw.debts);           lsWrite(lsRef.current.debts,     raw.debts);
+    setIsDirty(true);
+    await syncToDrive();
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [captureUndo, syncToDrive]);
+
+
   const value = useMemo<DataContextValue>(() => ({
     customers, products, sales, payments, debts,
     isLoading, isSyncing, lastSyncTime, syncError,
@@ -872,6 +887,7 @@ export function DataProvider({ children }: { children: React.ReactNode }) {
     isDirty,
     syncToDrive, restoreFromDrive, clearAllData,
     backupToGitHub, restoreFromGitHub,
+    importFromFile,
     canUndo, undoLastAction,
   }), [
     customers, products, sales, payments, debts,
@@ -885,6 +901,7 @@ export function DataProvider({ children }: { children: React.ReactNode }) {
     isDirty,
     syncToDrive, restoreFromDrive, clearAllData,
     backupToGitHub, restoreFromGitHub,
+    importFromFile,
     canUndo, undoLastAction,
   ]);
 

@@ -30,6 +30,7 @@ export default function SenkronizasyonPage() {
     isSyncing, lastSyncTime, syncError, isDirty,
     syncToDrive, restoreFromDrive,
     backupToGitHub, restoreFromGitHub,
+    importFromFile,
   } = useData();
 
   const [syncStatus, setSyncStatus]           = useState<"idle" | "success" | "error">("idle");
@@ -39,6 +40,14 @@ export default function SenkronizasyonPage() {
   const [isBackingUp, setIsBackingUp]         = useState(false);
   const [isGHRestoring, setIsGHRestoring]     = useState(false);
   const [backupMsg, setBackupMsg]             = useState<string | null>(null);
+
+  const [importFile, setImportFile]           = useState<File | null>(null);
+  const [importPreview, setImportPreview]     = useState<{customers:number;products:number;sales:number;payments:number;debts:number} | null>(null);
+  const [importError, setImportError]         = useState<string | null>(null);
+  const [showImportConfirm, setShowImportConfirm] = useState(false);
+  const [isImporting, setIsImporting]         = useState(false);
+  const [importStatus, setImportStatus]       = useState<"idle"|"success"|"error">("idle");
+  const [importData, setImportData]           = useState<import("@/lib/github").AppData | null>(null);
 
   const email = session?.user?.email ?? "";
 
@@ -65,6 +74,67 @@ export default function SenkronizasyonPage() {
       setTimeout(() => setRestoreStatus("idle"), 4000);
     } finally {
       setIsRestoring(false);
+    }
+  }
+
+
+  function handleFileChange(e: React.ChangeEvent<HTMLInputElement>) {
+    setImportError(null);
+    setImportPreview(null);
+    setImportData(null);
+    const file = e.target.files?.[0];
+    if (!file) return;
+    if (file.size > 10 * 1024 * 1024) {
+      setImportError("Dosya 10 MB'tan büyük olamaz.");
+      return;
+    }
+    setImportFile(file);
+    const reader = new FileReader();
+    reader.onload = (ev) => {
+      try {
+        const parsed = JSON.parse(ev.target?.result as string);
+        if (
+          !parsed || typeof parsed !== "object" ||
+          !Array.isArray(parsed.customers) ||
+          !Array.isArray(parsed.products) ||
+          !Array.isArray(parsed.sales) ||
+          !Array.isArray(parsed.payments) ||
+          !Array.isArray(parsed.debts)
+        ) {
+          setImportError("Geçersiz dosya formatı. Beklenen alanlar: customers, products, sales, payments, debts.");
+          return;
+        }
+        setImportData(parsed);
+        setImportPreview({
+          customers: parsed.customers.length,
+          products:  parsed.products.length,
+          sales:     parsed.sales.length,
+          payments:  parsed.payments.length,
+          debts:     parsed.debts.length,
+        });
+      } catch {
+        setImportError("JSON dosyası okunamadı. Dosyanın geçerli bir JSON olduğundan emin olun.");
+      }
+    };
+    reader.readAsText(file);
+  }
+
+  async function handleImport() {
+    if (!importData) return;
+    setIsImporting(true);
+    setShowImportConfirm(false);
+    try {
+      await importFromFile(importData);
+      setImportStatus("success");
+      setImportFile(null);
+      setImportPreview(null);
+      setImportData(null);
+      setTimeout(() => setImportStatus("idle"), 4000);
+    } catch {
+      setImportStatus("error");
+      setTimeout(() => setImportStatus("idle"), 4000);
+    } finally {
+      setIsImporting(false);
     }
   }
 
