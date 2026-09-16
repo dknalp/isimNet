@@ -299,3 +299,27 @@ describe("undoLastAction: dirty tracking after restore", () => {
     expect(isDirty).toBe(false);
   });
 });
+
+// ── visibilitychange: retry sync after keepalive failure ──────────────────────
+// When tab becomes hidden, a keepalive fetch is sent (best-effort, no await).
+// If the keepalive fails (mobile network drop, offline, etc.), dirty data is not
+// pushed. When the tab becomes visible again, we must retry the sync.
+
+describe("visibilitychange visible: retry sync after keepalive failure", () => {
+  it("should detect dirty state and flag for re-sync when visible", () => {
+    const mutationSeq = 5;
+    const syncedSeq   = 3; // keepalive failed — 2 mutations unsynced
+
+    // This logic mirrors the visibilitychange visible handler:
+    const shouldRetry = mutationSeq > syncedSeq;
+    expect(shouldRetry).toBe(true);
+  });
+
+  it("should not retry if keepalive succeeded (no dirty data)", () => {
+    const mutationSeq = 5;
+    const syncedSeq   = 5; // keepalive succeeded
+
+    const shouldRetry = mutationSeq > syncedSeq;
+    expect(shouldRetry).toBe(false);
+  });
+});

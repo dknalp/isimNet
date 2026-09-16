@@ -431,13 +431,19 @@ export function DataProvider({ children }: { children: React.ReactNode }) {
 
       if (document.visibilityState === "visible") {
         // Refresh SHA after keepalive POST (response unavailable from keepalive)
-        LOG.sync("visibilitychange visible: refreshing SHA from GitHub");
+        // Also re-push if dirty — the keepalive may have failed (mobile network drop etc.)
+        LOG.sync("visibilitychange visible: refreshing SHA and checking dirty state");
         fetch("/api/sync")
           .then(r => r.ok ? r.json() : null)
           .then(json => {
             if (json?.sha !== undefined) {
               shaRef.current = json.sha;
               LOG.sync("visibilitychange visible: SHA refreshed", { sha: json.sha });
+            }
+            // Retry push if keepalive failed
+            if (mutationSeq.current > syncedSeq.current) {
+              LOG.warn("visibilitychange visible: dirty data detected — retrying sync (keepalive may have failed)");
+              void syncToDriveInternal();
             }
           })
           .catch(() => {});
