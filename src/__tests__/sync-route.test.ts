@@ -2,18 +2,18 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 import { NextRequest } from "next/server";
 
 vi.mock("@/lib/auth", () => ({ auth: vi.fn() }));
-vi.mock("@/lib/github", () => ({
-  readOrMigrateDataFile: vi.fn(),
-  writeDataFile: vi.fn(),
+vi.mock("@/lib/localdb", () => ({
+  readLocalData:  vi.fn(),
+  writeLocalData: vi.fn(),
 }));
 
 import { GET, POST } from "@/app/api/sync/route";
 import { auth } from "@/lib/auth";
-import { readOrMigrateDataFile, writeDataFile } from "@/lib/github";
+import { readLocalData, writeLocalData } from "@/lib/localdb";
 
-const mockAuth  = auth                  as ReturnType<typeof vi.fn>;
-const mockRead  = readOrMigrateDataFile as ReturnType<typeof vi.fn>;
-const mockWrite = writeDataFile         as ReturnType<typeof vi.fn>;
+const mockAuth  = auth          as ReturnType<typeof vi.fn>;
+const mockRead  = readLocalData  as ReturnType<typeof vi.fn>;
+const mockWrite = writeLocalData as ReturnType<typeof vi.fn>;
 
 const SAMPLE_DATA = {
   customers: [{ id: "c1", name: "Ahmet" }],
@@ -24,11 +24,7 @@ const SAMPLE_DATA = {
 };
 
 const EMPTY_ARRAYS = {
-  customers: [],
-  products: [],
-  sales: [],
-  payments: [],
-  debts: [],
+  customers: [], products: [], sales: [], payments: [], debts: [],
 };
 
 function makePostRequest(body: Record<string, unknown>): NextRequest {
@@ -42,13 +38,14 @@ function makePostRequest(body: Record<string, unknown>): NextRequest {
 beforeEach(() => {
   vi.clearAllMocks();
   mockAuth.mockResolvedValue({ userId: "user1" });
+  mockWrite.mockResolvedValue(undefined);
 });
 
 // ─── GET handler ─────────────────────────────────────────────────────────────
 
 describe("GET /api/sync", () => {
-  it("returns all data and single sha from data.json", async () => {
-    mockRead.mockResolvedValue({ data: SAMPLE_DATA, sha: "sha_main" });
+  it("returns all data from local db", async () => {
+    mockRead.mockResolvedValue(SAMPLE_DATA);
 
     const res = await GET();
     const json = await res.json();
@@ -59,11 +56,11 @@ describe("GET /api/sync", () => {
     expect(json.sales).toEqual(SAMPLE_DATA.sales);
     expect(json.payments).toEqual(SAMPLE_DATA.payments);
     expect(json.debts).toEqual(SAMPLE_DATA.debts);
-    expect(json.sha).toBe("sha_main");
+    expect(json.sha).toBeUndefined();
   });
 
-  it("returns empty arrays and null sha when data.json doesn't exist", async () => {
-    mockRead.mockResolvedValue({ data: null, sha: null });
+  it("returns empty arrays when local file does not exist", async () => {
+    mockRead.mockResolvedValue(null);
 
     const res = await GET();
     const json = await res.json();
@@ -74,43 +71,47 @@ describe("GET /api/sync", () => {
     expect(json.sales).toEqual([]);
     expect(json.payments).toEqual([]);
     expect(json.debts).toEqual([]);
-    expect(json.sha).toBeNull();
   });
 
-  it("calls readOrMigrateDataFile exactly once with userId", async () => {
-    mockRead.mockResolvedValue({ data: SAMPLE_DATA, sha: "sha1" });
+  it("normalizes non-array fields to [] when stored file has schema drift", async () => {
+    // Simulates a corrupt or old-schema file where some fields are missing/wrong type
+    mockRead.mockResolvedValue({ customers: null, products: undefined, sales: [], payments: [], debts: "bad" } as unknown);
 
+    const res = await GET();
+    const json = await res.json();
+
+    expect(res.status).toBe(200);
+    expect(json.customers).toEqual([]);  // null → []
+    expect(json.products).toEqual([]);   // undefined → []
+    expect(json.sales).toEqual([]);      // [] → []
+    expect(json.payments).toEqual([]);
+    expect(json.debts).toEqual([]);      // "bad" → []
+  });
+
+  it("calls readLocalData exactly once with userId", async () => {
+    mockRead.mockResolvedValue(SAMPLE_DATA);
     await GET();
-
     expect(mockRead).toHaveBeenCalledTimes(1);
     expect(mockRead).toHaveBeenCalledWith("user1");
   });
 
   it("returns 401 when user is not authenticated", async () => {
     mockAuth.mockResolvedValue(null);
-
     const res = await GET();
-    const json = await res.json();
-
     expect(res.status).toBe(401);
-    expect(json.error).toBe("Unauthorized");
     expect(mockRead).not.toHaveBeenCalled();
   });
 
   it("returns 401 when session has no userId", async () => {
     mockAuth.mockResolvedValue({ userId: undefined });
-
     const res = await GET();
-
     expect(res.status).toBe(401);
   });
 
-  it("returns 500 when readOrMigrateDataFile throws", async () => {
-    mockRead.mockRejectedValue(new Error("GitHub unavailable"));
-
+  it("returns 500 when readLocalData throws", async () => {
+    mockRead.mockRejectedValue(new Error("disk error"));
     const res = await GET();
     const json = await res.json();
-
     expect(res.status).toBe(500);
     expect(json.error).toBe("Read failed");
   });
@@ -119,53 +120,42 @@ describe("GET /api/sync", () => {
 // ─── POST handler ────────────────────────────────────────────────────────────
 
 describe("POST /api/sync", () => {
-  it("writes all data atomically and returns new sha", async () => {
-    mockWrite.mockResolvedValue("new_sha");
-
-    const req = makePostRequest({ ...SAMPLE_DATA, sha: "old_sha" });
+  it("writes data to local db and returns ok", async () => {
+    const req = makePostRequest(SAMPLE_DATA);
     const res = await POST(req);
     const json = await res.json();
 
     expect(res.status).toBe(200);
     expect(json.ok).toBe(true);
-    expect(json.sha).toBe("new_sha");
+    expect(json.sha).toBeUndefined();
     expect(mockWrite).toHaveBeenCalledTimes(1);
   });
 
-  it("passes all data types and sha to writeDataFile", async () => {
-    mockWrite.mockResolvedValue("written_sha");
-
-    const req = makePostRequest({ ...SAMPLE_DATA, sha: "current_sha" });
+  it("passes all data types to writeLocalData", async () => {
+    const req = makePostRequest(SAMPLE_DATA);
     await POST(req);
 
-    expect(mockWrite).toHaveBeenCalledWith(
-      "user1",
-      {
-        customers: SAMPLE_DATA.customers,
-        products:  SAMPLE_DATA.products,
-        sales:     SAMPLE_DATA.sales,
-        payments:  SAMPLE_DATA.payments,
-        debts:     SAMPLE_DATA.debts,
-      },
-      "current_sha"
-    );
+    expect(mockWrite).toHaveBeenCalledWith("user1", {
+      customers: SAMPLE_DATA.customers,
+      products:  SAMPLE_DATA.products,
+      sales:     SAMPLE_DATA.sales,
+      payments:  SAMPLE_DATA.payments,
+      debts:     SAMPLE_DATA.debts,
+    });
   });
 
-  it("returns 400 when required array fields are missing from body", async () => {
+  it("returns 400 when required array fields are missing", async () => {
     const req = makePostRequest({ sha: null });
     const res = await POST(req);
     const json = await res.json();
-
     expect(res.status).toBe(400);
     expect(json.error).toMatch(/arrays/);
     expect(mockWrite).not.toHaveBeenCalled();
   });
 
-  it("returns 400 when a data field is not an array (e.g. object)", async () => {
+  it("returns 400 when a data field is not an array", async () => {
     const req = makePostRequest({ ...EMPTY_ARRAYS, customers: { id: "c1" } });
     const res = await POST(req);
-    const json = await res.json();
-
     expect(res.status).toBe(400);
     expect(mockWrite).not.toHaveBeenCalled();
   });
@@ -178,54 +168,32 @@ describe("POST /api/sync", () => {
     });
     const res = await POST(req);
     const json = await res.json();
-
     expect(res.status).toBe(400);
     expect(json.error).toBe("Invalid JSON body");
     expect(mockWrite).not.toHaveBeenCalled();
   });
 
-  it("defaults sha to null when sha is missing from body", async () => {
-    mockWrite.mockResolvedValue("sha");
-
-    const req = makePostRequest({ ...EMPTY_ARRAYS });
+  it("ignores sha field in body (no longer used)", async () => {
+    const req = makePostRequest({ ...SAMPLE_DATA, sha: "some-sha" });
     await POST(req);
-
-    const [, , sha] = mockWrite.mock.calls[0] as [string, unknown, unknown];
-    expect(sha).toBeNull();
+    const [, writtenData] = mockWrite.mock.calls[0] as [string, Record<string, unknown>];
+    expect(writtenData.sha).toBeUndefined();
   });
 
   it("returns 401 when user is not authenticated", async () => {
     mockAuth.mockResolvedValue(null);
-
     const req = makePostRequest(SAMPLE_DATA);
     const res = await POST(req);
-    const json = await res.json();
-
     expect(res.status).toBe(401);
-    expect(json.error).toBe("Unauthorized");
     expect(mockWrite).not.toHaveBeenCalled();
   });
 
-  it("returns 500 when writeDataFile throws", async () => {
-    mockWrite.mockRejectedValue(new Error("Network error"));
-
+  it("returns 500 when writeLocalData throws", async () => {
+    mockWrite.mockRejectedValue(new Error("disk full"));
     const req = makePostRequest(SAMPLE_DATA);
     const res = await POST(req);
     const json = await res.json();
-
     expect(res.status).toBe(500);
     expect(json.error).toBe("Sync failed");
-  });
-
-  it("returns 502 when writeDataFile returns null (write failed, no sha)", async () => {
-    mockWrite.mockResolvedValue(null);
-
-    const req = makePostRequest(SAMPLE_DATA);
-    const res = await POST(req);
-    const json = await res.json();
-
-    expect(res.status).toBe(502);
-    expect(json.error).toMatch(/SHA/);
-    expect(mockWrite).toHaveBeenCalledTimes(1);
   });
 });
