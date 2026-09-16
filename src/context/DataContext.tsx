@@ -153,7 +153,8 @@ export function DataProvider({ children }: { children: React.ReactNode }) {
   const sessionRef = useRef(session);
   sessionRef.current = session;
 
-  const shaRef = useRef<string | null>(null);
+  const shaRef        = useRef<string | null>(null);
+  const syncLockRef   = useRef(false);
 
   // P1-FIX: dirty tracking — seq snapshot captured BEFORE async, so concurrent mutations aren't lost
   const mutationSeq = useRef(0);
