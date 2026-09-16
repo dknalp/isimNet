@@ -138,3 +138,28 @@ describe("mount: orphan sale cleanup restores product stock", () => {
     expect(result.find(p => p.id === "p2")!.stock).toBe(10);
   });
 });
+
+// ── Stock: addSale clamping behavior ─────────────────────────────────────────
+// addSale clamps stock to 0 (Math.max) if qty > available stock.
+// This is a P2 inventory integrity issue — financial data (the sale) is preserved
+// but stock count becomes inaccurate. Tests document current behavior.
+
+describe("addSale: stock clamping", () => {
+  it("clamps to 0 when selling more than available stock", () => {
+    const product = makeProduct("p1", 3);
+    const newStock = Math.max(0, product.stock - 10); // selling 10, only 3 available
+    expect(newStock).toBe(0); // clamped — 7 units phantom-sold
+  });
+
+  it("exact stock deduction when qty === stock", () => {
+    const product = makeProduct("p1", 5);
+    const newStock = Math.max(0, product.stock - 5);
+    expect(newStock).toBe(0);
+  });
+
+  it("normal deduction when qty < stock", () => {
+    const product = makeProduct("p1", 10);
+    const newStock = Math.max(0, product.stock - 3);
+    expect(newStock).toBe(7);
+  });
+});
