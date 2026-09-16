@@ -496,11 +496,22 @@ export function DataProvider({ children }: { children: React.ReactNode }) {
     if (undoTimerRef.current) clearTimeout(undoTimerRef.current);
     lastUndoRef.current = null;
     setCanUndo(false);
+    LOG.warn("undoLastAction: restoring snapshot", {
+      customers: snap.customers.length, products: snap.products.length,
+      sales: snap.sales.length, payments: snap.payments.length, debts: snap.debts.length,
+    });
     setCustomers(snap.customers);
     setProducts(snap.products);
     setSales(snap.sales);
     setPayments(snap.payments);
     setDebts(snap.debts);
+    lsWrite(LS.customers, snap.customers);
+    lsWrite(LS.products,  snap.products);
+    lsWrite(LS.sales,     snap.sales);
+    lsWrite(LS.payments,  snap.payments);
+    lsWrite(LS.debts,     snap.debts);
+    markMutation();
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   const deleteCustomer = useCallback((id: string) => {
