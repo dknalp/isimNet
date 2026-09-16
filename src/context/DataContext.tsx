@@ -345,17 +345,24 @@ export function DataProvider({ children }: { children: React.ReactNode }) {
           return;
         }
 
-        // Local DB is authoritative
-        if (Array.isArray(data.customers)) { setCustomers(data.customers); lsWrite(LS.customers, data.customers); }
-        if (Array.isArray(data.products))  { setProducts(data.products);   lsWrite(LS.products,  data.products); }
-        if (Array.isArray(data.sales))     { setSales(data.sales);         lsWrite(LS.sales,     data.sales); }
-        if (Array.isArray(data.payments))  { setPayments(data.payments);   lsWrite(LS.payments,  data.payments); }
-        if (Array.isArray(data.debts))     { setDebts(data.debts);         lsWrite(LS.debts,     data.debts); }
+        // Local DB is authoritative — apply all arrays atomically to prevent mixed stale/server state
+        const mounted = {
+          customers: Array.isArray(data.customers) ? data.customers as Customer[] : [],
+          products:  Array.isArray(data.products)  ? data.products  as Product[]  : [],
+          sales:     Array.isArray(data.sales)     ? data.sales     as Sale[]     : [],
+          payments:  Array.isArray(data.payments)  ? data.payments  as Payment[]  : [],
+          debts:     Array.isArray(data.debts)     ? data.debts     as Debt[]     : [],
+        };
+        setCustomers(mounted.customers); lsWrite(LS.customers, mounted.customers);
+        setProducts(mounted.products);   lsWrite(LS.products,  mounted.products);
+        setSales(mounted.sales);         lsWrite(LS.sales,     mounted.sales);
+        setPayments(mounted.payments);   lsWrite(LS.payments,  mounted.payments);
+        setDebts(mounted.debts);         lsWrite(LS.debts,     mounted.debts);
 
         // Clean orphan records (customer deleted on another device)
         // Also restore product stock for any sales that get orphaned
-        const cIds = new Set((data.customers as Customer[]).map((c: Customer) => c.id));
-        const orphanSales = (data.sales as Sale[] ?? []).filter(s => !cIds.has(s.customerId));
+        const cIds = new Set(mounted.customers.map((c: Customer) => c.id));
+        const orphanSales = mounted.sales.filter(s => !cIds.has(s.customerId));
         const hadOrphans = orphanSales.length > 0;
         if (hadOrphans) {
           LOG.warn("mount: cleaning orphan sales — restoring stock", { count: orphanSales.length });
