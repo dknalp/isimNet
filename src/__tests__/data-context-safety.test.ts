@@ -40,6 +40,16 @@ function lsReadSafe<T>(key: string): T[] | null {
 
 // ── P0-A: lsWrite quota error surfacing ──────────────────────────────────────
 
+// Helper: lsWriteSafe that accepts a storage object for testability
+function lsWriteSafeWith(storage: Storage, key: string, data: unknown[]): boolean {
+  try {
+    storage.setItem(key, JSON.stringify(data));
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 describe("P0-A: lsWrite quota error surfacing", () => {
   afterEach(() => {
     vi.restoreAllMocks();
@@ -53,36 +63,19 @@ describe("P0-A: lsWrite quota error surfacing", () => {
   });
 
   it("returns false when localStorage.setItem throws (simulated quota)", () => {
-    // happy-dom localStorage.setItem is non-writable; use Object.defineProperty
-    const originalDescriptor = Object.getOwnPropertyDescriptor(Object.getPrototypeOf(localStorage), "setItem") ??
-      Object.getOwnPropertyDescriptor(localStorage, "setItem");
-    Object.defineProperty(localStorage, "setItem", {
-      configurable: true,
-      writable: true,
-      value: () => { throw new DOMException("QuotaExceededError"); },
-    });
-    let ok: boolean;
-    try {
-      ok = lsWriteSafe("test_key", [{ id: "1" }]);
-    } finally {
-      if (originalDescriptor) {
-        Object.defineProperty(localStorage, "setItem", originalDescriptor);
-      }
-    }
-    expect(ok!).toBe(false);
+    // Use an injectable storage mock to avoid happy-dom prototype patching issues
+    const throwingStorage = {
+      setItem: () => { throw new DOMException("QuotaExceededError"); },
+    } as unknown as Storage;
+    const ok = lsWriteSafeWith(throwingStorage, "test_key", [{ id: "1" }]);
+    expect(ok).toBe(false);
   });
 
   it("does not throw to the caller when quota error occurs", () => {
-    Object.defineProperty(localStorage, "setItem", {
-      configurable: true, writable: true,
-      value: () => { throw new DOMException("QuotaExceededError"); },
-    });
-    try {
-      expect(() => lsWriteSafe("test_key", [{ id: "1" }])).not.toThrow();
-    } finally {
-      // Restore: delete the own property so prototype chain is used again
-      delete (localStorage as unknown as Record<string, unknown>)["setItem"];
-    }
+    const throwingStorage = {
+      setItem: () => { throw new DOMException("QuotaExceededError"); },
+    } as unknown as Storage;
+    expect(() => lsWriteSafeWith(throwingStorage, "test_key", [{ id: "1" }])).not.toThrow();
   });
 });
 
