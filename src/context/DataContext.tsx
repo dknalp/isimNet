@@ -729,6 +729,15 @@ export function DataProvider({ children }: { children: React.ReactNode }) {
 
   // ── Clear all data ────────────────────────────────────────────────────────
   const clearAllData = useCallback(async () => {
+    // Wait for any in-flight sync to complete so clearAllData POST arrives last on the server
+    if (syncLockRef.current) {
+      LOG.warn("clearAllData: waiting for in-flight sync to complete before wiping");
+      await new Promise<void>(resolve => {
+        const poll = setInterval(() => {
+          if (!syncLockRef.current) { clearInterval(poll); resolve(); }
+        }, 50);
+      });
+    }
     LOG.warn("clearAllData: wiping all local and remote data");
     setCustomers([]); lsWrite(lsRef.current.customers, []);
     setProducts([]);  lsWrite(lsRef.current.products,  []);
