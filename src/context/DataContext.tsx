@@ -150,13 +150,6 @@ export function DataProvider({ children }: { children: React.ReactNode }) {
   const undoTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const [canUndo, setCanUndo] = useState(false);
 
-  useEffect(() => {
-    try {
-      const raw = localStorage.getItem(LS.lastSync);
-      if (raw) setLastSyncTime(new Date(raw));
-    } catch { /* */ }
-  }, []);
-
   const stateRef = useRef({ customers, products, sales, payments, debts });
   stateRef.current = { customers, products, sales, payments, debts };
 
@@ -170,14 +163,8 @@ export function DataProvider({ children }: { children: React.ReactNode }) {
   const syncedSeq   = useRef(0);
 
   // P1-FIX: track timestamp of last mutation to detect offline edits on remount
-  const lastMutationAt = useRef<number>(
-    (() => {
-      try {
-        const raw = localStorage.getItem(LS.lastMutation);
-        return raw ? parseInt(raw, 10) : 0;
-      } catch { return 0; }
-    })()
-  );
+  // Initialized to 0; the real persisted value is loaded in mount useEffect once session.userId is known
+  const lastMutationAt = useRef<number>(0);
 
   // ── Mutation helpers: write localStorage + increment dirty counter ─────────
   function markMutation() {
@@ -332,6 +319,14 @@ export function DataProvider({ children }: { children: React.ReactNode }) {
     if (localSales)    setSales(localSales);
     if (localPayments) setPayments(localPayments);
     if (localDebts)    setDebts(localDebts);
+
+    // Restore user-scoped timestamps (these use LS with correct userId, unlike the top-level IIFE)
+    try {
+      const rawSync = localStorage.getItem(LS.lastSync);
+      if (rawSync) setLastSyncTime(new Date(rawSync));
+      const rawMut = localStorage.getItem(LS.lastMutation);
+      if (rawMut) lastMutationAt.current = parseInt(rawMut, 10);
+    } catch { /* */ }
 
     const hasLocal = localCustomers !== null || localProducts !== null;
     if (!hasLocal) setIsLoading(true);
