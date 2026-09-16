@@ -435,19 +435,20 @@ describe("syncToDriveInternal: sequence capture safety (P1)", () => {
   });
 });
 
-describe("syncToDriveInternal: P0 sha guard", () => {
-  it("missing sha in 200 response means write may have silently failed — stay dirty", () => {
-    // If GitHub returns 200 but json.sha is missing:
-    const json = { message: "ok" }; // no sha field
-    const writeFailed = !json.sha;
-    expect(writeFailed).toBe(true);
-    // syncedSeq should NOT advance — data remains dirty for retry
+describe("syncToDriveInternal: P0 success guard (localdb)", () => {
+  it("successful POST returns { ok: true } — syncedSeq advances, isDirty clears", () => {
+    // localdb backend returns { ok: true } on success — no sha needed
+    const json = { ok: true };
+    const writeConfirmed = json.ok === true;
+    expect(writeConfirmed).toBe(true);
   });
 
-  it("present sha confirms write success — advance syncedSeq", () => {
-    const json = { sha: "abc123" };
-    const writeConfirmed = !!json.sha;
-    expect(writeConfirmed).toBe(true);
+  it("non-ok HTTP response — syncedSeq must NOT advance so data retries", () => {
+    let mutationSeq = 5;
+    let syncedSeq = 3;
+    // Simulate 500 response: syncedSeq stays unchanged
+    const isDirty = mutationSeq > syncedSeq;
+    expect(isDirty).toBe(true); // data survives for retry
   });
 });
 
@@ -463,26 +464,18 @@ describe("syncToDriveInternal: network error leaves data dirty", () => {
   });
 });
 
-// ── clearAllData: sha reset on write failure ──────────────────────────────────
-// When clearAllData fails to reach GitHub (network error, rate limit),
-// shaRef.current is reset to null so the next auto-sync attempt sends
-// sha:null → triggers 422 → retry-with-fresh-SHA path (from Loop 2 fix).
+// ── clearAllData: dirty state after failure ──────────────────────────────────
+// When clearAllData fails (network error), mutationSeq stays ahead of
+// syncedSeq — data remains dirty and retries on the next sync interval.
 
-describe("clearAllData: sha=null reset on failure enables retry path", () => {
-  it("sha=null after failure means next sync will use fresh SHA from GitHub", () => {
-    let shaRef: string | null = "old-sha-abc";
+describe("clearAllData: dirty state preserved after failure enables retry", () => {
+  it("after failure mutationSeq > syncedSeq — isDirty stays true for retry", () => {
+    let mutationSeq = 10;
+    let syncedSeq = 8;
 
-    // Simulate clearAllData write failure
-    shaRef = null;
-
-    // Next sync captures sha=null and sends it
-    const nextSyncSha = shaRef;
-    expect(nextSyncSha).toBeNull();
-
-    // GitHub returns 422 (file exists, no sha) → CONFLICT sentinel → retry with fresh SHA
-    const status = 422;
-    const isConflict = status === 409 || status === 422;
-    expect(isConflict).toBe(true); // will trigger retry-with-fresh-SHA
+    // Simulate clearAllData network failure — syncedSeq stays behind
+    const isDirty = mutationSeq > syncedSeq;
+    expect(isDirty).toBe(true); // data survives for retry
   });
 });
 

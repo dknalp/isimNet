@@ -29,12 +29,16 @@ export default function SenkronizasyonPage() {
     customers, products, sales, payments, debts,
     isSyncing, lastSyncTime, syncError, isDirty,
     syncToDrive, restoreFromDrive,
+    backupToGitHub, restoreFromGitHub,
   } = useData();
 
   const [syncStatus, setSyncStatus]           = useState<"idle" | "success" | "error">("idle");
   const [showRestoreConfirm, setShowRestoreConfirm] = useState(false);
   const [isRestoring, setIsRestoring]         = useState(false);
   const [restoreStatus, setRestoreStatus]     = useState<"idle" | "success" | "error">("idle");
+  const [isBackingUp, setIsBackingUp]         = useState(false);
+  const [isGHRestoring, setIsGHRestoring]     = useState(false);
+  const [backupMsg, setBackupMsg]             = useState<string | null>(null);
 
   const email = session?.user?.email ?? "";
 
@@ -81,6 +85,35 @@ export default function SenkronizasyonPage() {
       icon: <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={1.8} stroke="#EA580C" className="w-4 h-4"><path strokeLinecap="round" strokeLinejoin="round" d="M15 12H9m12 0a9 9 0 1 1-18 0 9 9 0 0 1 18 0Z" /></svg>,
       bg: "#FFF7ED" },
   ];
+
+  async function handleBackupToGitHub() {
+    setIsBackingUp(true);
+    setBackupMsg(null);
+    try {
+      await backupToGitHub();
+      setBackupMsg("GitHub yedekleme tamamlandı.");
+    } catch {
+      setBackupMsg("GitHub yedekleme başarısız oldu.");
+    } finally {
+      setIsBackingUp(false);
+      setTimeout(() => setBackupMsg(null), 4000);
+    }
+  }
+
+  async function handleRestoreFromGitHub() {
+    setIsGHRestoring(true);
+    setBackupMsg(null);
+    try {
+      await restoreFromGitHub();
+      setBackupMsg("GitHub'dan geri yükleme tamamlandı.");
+    } catch {
+      setBackupMsg("GitHub geri yükleme başarısız oldu.");
+    } finally {
+      setIsGHRestoring(false);
+      setTimeout(() => setBackupMsg(null), 4000);
+    }
+  }
+
 
   return (
     <div className="min-h-screen flex flex-col bg-gray-50">

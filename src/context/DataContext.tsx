@@ -663,6 +663,7 @@ export function DataProvider({ children }: { children: React.ReactNode }) {
       if (Array.isArray(data.debts))     { setDebts(data.debts);         lsWrite(LS.debts,     data.debts); }
 
       syncedSeq.current = mutationSeq.current;
+      setIsDirty(false);
       const now = new Date();
       setLastSyncTime(now);
       try { localStorage.setItem(LS.lastSync, now.toISOString()); } catch { /* */ }
