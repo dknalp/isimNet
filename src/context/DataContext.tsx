@@ -656,11 +656,19 @@ export function DataProvider({ children }: { children: React.ReactNode }) {
       const data = await res.json();
       LOG.sync("restoreFromDrive: received", { counts: { customers: data.customers?.length, products: data.products?.length } });
 
-      if (Array.isArray(data.customers)) { setCustomers(data.customers); lsWrite(LS.customers, data.customers); }
-      if (Array.isArray(data.products))  { setProducts(data.products);   lsWrite(LS.products,  data.products); }
-      if (Array.isArray(data.sales))     { setSales(data.sales);         lsWrite(LS.sales,     data.sales); }
-      if (Array.isArray(data.payments))  { setPayments(data.payments);   lsWrite(LS.payments,  data.payments); }
-      if (Array.isArray(data.debts))     { setDebts(data.debts);         lsWrite(LS.debts,     data.debts); }
+      // Apply all arrays atomically — default missing keys to [] to prevent mixed stale/server state
+      const restored = {
+        customers: Array.isArray(data.customers) ? data.customers : [],
+        products:  Array.isArray(data.products)  ? data.products  : [],
+        sales:     Array.isArray(data.sales)     ? data.sales     : [],
+        payments:  Array.isArray(data.payments)  ? data.payments  : [],
+        debts:     Array.isArray(data.debts)     ? data.debts     : [],
+      };
+      setCustomers(restored.customers); lsWrite(LS.customers, restored.customers);
+      setProducts(restored.products);   lsWrite(LS.products,  restored.products);
+      setSales(restored.sales);         lsWrite(LS.sales,     restored.sales);
+      setPayments(restored.payments);   lsWrite(LS.payments,  restored.payments);
+      setDebts(restored.debts);         lsWrite(LS.debts,     restored.debts);
 
       syncedSeq.current = mutationSeq.current;
       setIsDirty(false);
