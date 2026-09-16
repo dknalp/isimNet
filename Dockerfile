@@ -27,6 +27,11 @@ COPY --from=builder --chown=nextjs:nodejs /app/.next/standalone ./
 COPY --from=builder --chown=nextjs:nodejs /app/.next/static ./.next/static
 COPY --from=builder --chown=nextjs:nodejs /app/public ./public
 
+# Create /data and give nextjs user ownership before the volume is mounted.
+# This sets the directory's ownership in the image layer — Docker preserves it
+# on first mount of a named volume, so the nextjs user can write to it.
+RUN mkdir -p /data && chown nextjs:nodejs /data
+
 USER nextjs
 
 VOLUME ["/data"]
