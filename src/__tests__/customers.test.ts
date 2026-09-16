@@ -9,7 +9,7 @@ function makeSale(overrides: Partial<Sale> = {}): Sale {
     date: "2024-06-01T10:00:00.000Z",
     items: [{ productId: "p1", productName: "Ürün", quantity: 2, unitPrice: 100 }],
     subtotal: 200,
-    vatRate: 18,
+    vatRate: 20,
     vatAmount: 36,
     total: 236,
     ...overrides,
