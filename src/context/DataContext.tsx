@@ -608,7 +608,8 @@ export function DataProvider({ children }: { children: React.ReactNode }) {
     setSales([]);     lsWrite(LS.sales,     []);
     setPayments([]);  lsWrite(LS.payments,  []);
     setDebts([]);     lsWrite(LS.debts,     []);
-    mutationSeq.current += 1;
+    // Use markMutation so lastMutationAt timestamp stays consistent
+    markMutation();
     if (sessionRef.current?.userId) {
       try {
         const res = await fetch("/api/sync", {
@@ -618,15 +619,32 @@ export function DataProvider({ children }: { children: React.ReactNode }) {
         });
         if (res.ok) {
           const json = await res.json().catch(() => null);
-          if (json?.sha) { shaRef.current = json.sha; syncedSeq.current = mutationSeq.current; }
+          if (json?.sha) {
+            shaRef.current = json.sha;
+            syncedSeq.current = mutationSeq.current;
+            const now = new Date();
+            setLastSyncTime(now);
+            try { localStorage.setItem(LS.lastSync, now.toISOString()); } catch { /* */ }
+          } else {
+            // Write succeeded but sha missing — keep data dirty so next auto-sync retries
+            LOG.error("clearAllData: remote wipe response missing sha — will retry on next sync");
+            setSyncError("Veri silme doğrulanamadı. Bir sonraki senkronizasyonda tekrar denenecek.");
+          }
           LOG.warn("clearAllData: remote data wiped", { sha: json?.sha });
         } else {
-          LOG.error(`clearAllData: remote wipe failed HTTP ${res.status}`);
+          // Remote wipe failed — data is locally empty but remotely still has old data
+          // Reset shaRef to null so next sync writes without a stale sha
+          shaRef.current = null;
+          LOG.error(`clearAllData: remote wipe failed HTTP ${res.status} — sha reset to null`);
+          setSyncError(`Uzak veri silinemedi (HTTP ${res.status}). Sonraki senkronizasyonda tekrar denenecek.`);
         }
       } catch (e) {
-        LOG.error("clearAllData: remote wipe error", e);
+        shaRef.current = null;
+        LOG.error("clearAllData: remote wipe error — sha reset to null", e);
+        setSyncError("Ağ hatası — uzak veri silinemedi. Sonraki senkronizasyonda tekrar denenecek.");
       }
-    }  }, []);
+    }
+  }, [markMutation]);
 
   // ── Computed helpers ──────────────────────────────────────────────────────
   const getCustomerTotals = useCallback((customerId: string) => {
