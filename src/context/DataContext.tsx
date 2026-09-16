@@ -434,11 +434,27 @@ export function DataProvider({ children }: { children: React.ReactNode }) {
 
   const deleteCustomer = useCallback((id: string) => {
     LOG.info("deleteCustomer", { id });
+    // Restore product stock for every sale belonging to this customer before deleting
+    const now = new Date().toISOString();
+    const customerSales = stateRef.current.sales.filter(s => s.customerId === id);
+    if (customerSales.length > 0) {
+      LOG.info("deleteCustomer: restoring stock for customer sales", { customerId: id, salesCount: customerSales.length });
+      setP(prev => prev.map(p => {
+        let restored = p.stock;
+        for (const sale of customerSales) {
+          const item = sale.items.find(i => i.productId === p.id);
+          if (item) restored += item.quantity;
+        }
+        if (restored === p.stock) return p;
+        LOG.info("deleteCustomer: stock restored", { productId: p.id, from: p.stock, to: restored });
+        return { ...p, stock: restored, updatedAt: now };
+      }));
+    }
     setC(prev => prev.filter(c => c.id !== id));
     setS(prev => prev.filter(s => s.customerId !== id));
     setPay(prev => prev.filter(p => p.customerId !== id));
     setD(prev => prev.filter(d => d.customerId !== id));
-  }, [setC, setS, setPay, setD]);
+  }, [setC, setS, setPay, setD, setP]);
 
   // ── CRUD: products ────────────────────────────────────────────────────────
   const addProduct = useCallback((data: NewProductFormData) => {
