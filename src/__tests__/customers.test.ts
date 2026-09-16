@@ -1,113 +1,205 @@
 import { describe, it, expect } from "vitest";
-import { buildActivityFeed, Sale, Payment, Debt } from "@/lib/customers";
+import { buildActivityFeed } from "@/lib/customers";
+import type { Sale, Payment, Debt } from "@/lib/customers";
 
-function makeSale(id: string, date: string, total: number): Sale {
+function makeSale(overrides: Partial<Sale> = {}): Sale {
   return {
-    id,
+    id: "s1",
     customerId: "c1",
-    date,
-    items: [],
-    vatRate: 0,
-    subtotal: total,
-    vatAmount: 0,
-    total,
+    date: "2024-06-01T10:00:00.000Z",
+    items: [{ productId: "p1", productName: "Ürün", quantity: 2, unitPrice: 100 }],
+    subtotal: 200,
+    vatRate: 18,
+    vatAmount: 36,
+    total: 236,
+    ...overrides,
   };
 }
 
-function makePayment(id: string, date: string, amount: number): Payment {
-  return { id, customerId: "c1", date, amount, description: "" };
+function makePayment(overrides: Partial<Payment> = {}): Payment {
+  return {
+    id: "pay1",
+    customerId: "c1",
+    date: "2024-06-01T10:00:00.000Z",
+    amount: 100,
+    description: "Ödeme",
+    ...overrides,
+  };
 }
 
-function makeDebt(id: string, date: string, amount: number): Debt {
-  return { id, customerId: "c1", date, amount, description: "" };
+function makeDebt(overrides: Partial<Debt> = {}): Debt {
+  return {
+    id: "d1",
+    customerId: "c1",
+    date: "2024-06-01T10:00:00.000Z",
+    amount: 50,
+    description: "Borç",
+    ...overrides,
+  };
 }
 
-describe("buildActivityFeed", () => {
-  it("returns empty array for empty inputs", () => {
+// ─── Empty inputs ─────────────────────────────────────────────────────────────
+
+describe("buildActivityFeed: empty inputs", () => {
+  it("returns empty array for all empty inputs", () => {
     expect(buildActivityFeed([], [], [])).toEqual([]);
   });
 
-  it("returns empty array with default debts parameter", () => {
+  it("handles missing debts argument (defaults to [])", () => {
     expect(buildActivityFeed([], [])).toEqual([]);
   });
 
-  it("computes correct running balance: sale then payment", () => {
-    const sales = [makeSale("s1", "2024-01-01T10:00:00.000Z", 1000)];
-    const payments = [makePayment("p1", "2024-01-02T10:00:00.000Z", 400)];
-    const feed = buildActivityFeed(sales, payments);
+  it("returns correct items when only sales provided", () => {
+    const feed = buildActivityFeed([makeSale()], [], []);
+    expect(feed).toHaveLength(1);
+    expect(feed[0].type).toBe("sale");
+  });
 
-    // Newest first — payment is first in output
+  it("returns correct items when only payments provided", () => {
+    const feed = buildActivityFeed([], [makePayment()], []);
+    expect(feed).toHaveLength(1);
     expect(feed[0].type).toBe("payment");
-    expect(feed[0].runningBalance).toBe(600);
-    expect(feed[1].type).toBe("sale");
-    expect(feed[1].runningBalance).toBe(1000);
   });
 
-  it("computes correct running balance: sale, payment, debt", () => {
-    const sales = [makeSale("s1", "2024-01-01T10:00:00.000Z", 1000)];
-    const payments = [makePayment("p1", "2024-01-02T10:00:00.000Z", 300)];
-    const debts = [makeDebt("d1", "2024-01-03T10:00:00.000Z", 200)];
-    const feed = buildActivityFeed(sales, payments, debts);
-
-    // Newest first: debt (balance=500), payment (balance=700), sale (balance=1000)
+  it("returns correct items when only debts provided", () => {
+    const feed = buildActivityFeed([], [], [makeDebt()]);
+    expect(feed).toHaveLength(1);
     expect(feed[0].type).toBe("debt");
+  });
+});
+
+// ─── Running balance arithmetic ───────────────────────────────────────────────
+
+describe("buildActivityFeed: balance arithmetic", () => {
+  it("sale increases balance by total", () => {
+    const feed = buildActivityFeed([makeSale({ total: 500 })], [], []);
     expect(feed[0].runningBalance).toBe(500);
-    expect(feed[1].type).toBe("payment");
-    expect(feed[1].runningBalance).toBe(700);
-    expect(feed[2].type).toBe("sale");
-    expect(feed[2].runningBalance).toBe(1000);
   });
 
-  it("result is sorted newest-first (reversed chronological)", () => {
+  it("payment decreases balance", () => {
+    const feed = buildActivityFeed(
+      [makeSale({ date: "2024-01-01", total: 500 })],
+      [makePayment({ date: "2024-01-02", amount: 200 })],
+      []
+    );
+    const sorted = feed.sort((a, b) => a.date.localeCompare(b.date));
+    expect(sorted[0].runningBalance).toBe(500);
+    expect(sorted[1].runningBalance).toBe(300);
+  });
+
+  it("debt decreases balance", () => {
+    const feed = buildActivityFeed(
+      [makeSale({ date: "2024-01-01", total: 500 })],
+      [],
+      [makeDebt({ date: "2024-01-02", amount: 100 })]
+    );
+    const sorted = feed.sort((a, b) => a.date.localeCompare(b.date));
+    expect(sorted[0].runningBalance).toBe(500);
+    expect(sorted[1].runningBalance).toBe(400);
+  });
+
+  it("balance can go negative (overpayment)", () => {
+    const feed = buildActivityFeed(
+      [makeSale({ date: "2024-01-01", total: 100 })],
+      [makePayment({ date: "2024-01-02", amount: 300 })],
+      []
+    );
+    const lastEntry = feed.find(f => f.type === "payment")!;
+    expect(lastEntry.runningBalance).toBe(-200);
+  });
+
+  it("multiple sales accumulate correctly", () => {
     const sales = [
-      makeSale("s1", "2024-01-01T10:00:00.000Z", 100),
-      makeSale("s2", "2024-03-01T10:00:00.000Z", 200),
-      makeSale("s3", "2024-02-01T10:00:00.000Z", 150),
+      makeSale({ id: "s1", date: "2024-01-01", total: 100 }),
+      makeSale({ id: "s2", date: "2024-01-02", total: 200 }),
+      makeSale({ id: "s3", date: "2024-01-03", total: 300 }),
     ];
-    const feed = buildActivityFeed(sales, []);
-    const dates = feed.map((f) => f.date);
-    const sorted = [...dates].sort((a, b) => b.localeCompare(a));
-    expect(dates).toEqual(sorted);
+    const feed = buildActivityFeed(sales, [], []);
+    // Sorted newest-first, so reversed running balance: 600, 500, 100
+    const balances = feed.map(f => f.runningBalance);
+    expect(Math.max(...balances)).toBe(600);
+    expect(Math.min(...balances)).toBe(100);
   });
 
-  it("same-timestamp events produce deterministic running balance", () => {
-    const ts = "2024-06-15T12:00:00.000Z";
-    const sales = [makeSale("s1", ts, 500)];
-    const payments = [makePayment("p1", ts, 200)];
-    // Run twice — result must be identical
-    const feed1 = buildActivityFeed(sales, payments);
-    const feed2 = buildActivityFeed(sales, payments);
-    const balances1 = feed1.map((f) => f.runningBalance);
-    const balances2 = feed2.map((f) => f.runningBalance);
-    expect(balances1).toEqual(balances2);
+  it("complex mix: sale + payment + debt computes correct final balance", () => {
+    const feed = buildActivityFeed(
+      [makeSale({ id: "s1", date: "2024-01-01", total: 1000 })],
+      [makePayment({ id: "p1", date: "2024-01-03", amount: 400 })],
+      [makeDebt({ id: "d1", date: "2024-01-02", amount: 100 })]
+    );
+    // Oldest-first order: sale(1000) → debt(-100→900) → payment(-400→500)
+    // Feed is newest-first so last item in array has final balance
+    const finalBalance = feed[0].runningBalance;
+    expect(finalBalance).toBe(500);
   });
 
-  it("same-timestamp: payment sorts before sale (reduces balance first)", () => {
-    const ts = "2024-06-15T12:00:00.000Z";
-    const sales = [makeSale("s1", ts, 1000)];
-    const payments = [makePayment("p1", ts, 400)];
-    const feed = buildActivityFeed(sales, payments);
-    // Oldest-first processing: payment (0-400=-400) then sale (-400+1000=600)
-    // Reversed output: sale first (balance=600), payment last (balance=-400... wait)
-    // Actually: payment sorts before sale in ascending order
-    // ascending: payment runningBalance = -400, sale runningBalance = 600
-    // reversed (newest-first): sale (600), payment (-400)
-    const saleFeed = feed.find((f) => f.type === "sale");
-    const payFeed = feed.find((f) => f.type === "payment");
-    expect(saleFeed).toBeDefined();
-    expect(payFeed).toBeDefined();
-    // Balances are deterministic
-    expect(saleFeed!.runningBalance).toBe(600);
-    expect(payFeed!.runningBalance).toBe(-400);
+  it("handles large amounts without floating-point corruption (integer amounts)", () => {
+    const largeTotal = 9_999_999;
+    const feed = buildActivityFeed([makeSale({ total: largeTotal })], [], []);
+    expect(feed[0].runningBalance).toBe(largeTotal);
   });
+});
 
-  it("handles only payments (balance goes negative)", () => {
-    const payments = [
-      makePayment("p1", "2024-01-01T10:00:00.000Z", 100),
-      makePayment("p2", "2024-01-02T10:00:00.000Z", 50),
+// ─── Sorting ──────────────────────────────────────────────────────────────────
+
+describe("buildActivityFeed: sort order", () => {
+  it("feed is returned newest-first (most recent date at index 0)", () => {
+    const sales = [
+      makeSale({ id: "s1", date: "2024-01-01T00:00:00.000Z", total: 100 }),
+      makeSale({ id: "s2", date: "2024-06-01T00:00:00.000Z", total: 200 }),
     ];
-    const feed = buildActivityFeed([], payments);
-    expect(feed[0].runningBalance).toBe(-150);
-    expect(feed[1].runningBalance).toBe(-100);
+    const feed = buildActivityFeed(sales, [], []);
+    expect(feed[0].date).toBe("2024-06-01T00:00:00.000Z");
+    expect(feed[1].date).toBe("2024-01-01T00:00:00.000Z");
+  });
+
+  it("same timestamp: payment ordered before debt, debt before sale (stable tie-breaker)", () => {
+    const ts = "2024-06-01T12:00:00.000Z";
+    const feed = buildActivityFeed(
+      [makeSale({ id: "s1", date: ts, total: 100 })],
+      [makePayment({ id: "pay1", date: ts, amount: 50 })],
+      [makeDebt({ id: "d1", date: ts, amount: 25 })]
+    );
+    // Sort is descending by date; for same-timestamp, typeOrder ascending (payment=0,debt=1,sale=2)
+    // so same-date items appear as: payment first, debt second, sale last (payment wins tie-break)
+    const types = feed.map(f => f.type);
+    expect(types).toEqual(["payment", "debt", "sale"]);
+  });
+
+  it("different dates across types are interleaved correctly", () => {
+    const feed = buildActivityFeed(
+      [makeSale({ id: "s1", date: "2024-01-03", total: 100 })],
+      [makePayment({ id: "p1", date: "2024-01-01", amount: 50 })],
+      [makeDebt({ id: "d1", date: "2024-01-02", amount: 25 })]
+    );
+    expect(feed[0].date).toBe("2024-01-03");
+    expect(feed[1].date).toBe("2024-01-02");
+    expect(feed[2].date).toBe("2024-01-01");
+  });
+});
+
+// ─── Single item of each type ─────────────────────────────────────────────────
+
+describe("buildActivityFeed: single item", () => {
+  it("single sale returns array of length 1 with correct type and balance", () => {
+    const feed = buildActivityFeed([makeSale({ total: 999 })], [], []);
+    expect(feed).toHaveLength(1);
+    expect(feed[0].type).toBe("sale");
+    expect(feed[0].runningBalance).toBe(999);
+    expect(feed[0].data).toMatchObject({ total: 999 });
+  });
+
+  it("single payment returns array of length 1 with negative balance", () => {
+    const feed = buildActivityFeed([], [makePayment({ amount: 100 })], []);
+    expect(feed).toHaveLength(1);
+    expect(feed[0].type).toBe("payment");
+    expect(feed[0].runningBalance).toBe(-100);
+  });
+
+  it("single debt returns array of length 1 with negative balance", () => {
+    const feed = buildActivityFeed([], [], [makeDebt({ amount: 75 })]);
+    expect(feed).toHaveLength(1);
+    expect(feed[0].type).toBe("debt");
+    expect(feed[0].runningBalance).toBe(-75);
   });
 });

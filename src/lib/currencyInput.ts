@@ -24,8 +24,10 @@ export function formatCurrencyDisplay(raw: string): string {
     decPart = null;
   }
 
-  const formattedInt = intPart
-    ? intPart.replace(/\B(?=(\d{3})+(?!\d))/g, ".")
+  // Strip leading zeros (e.g. "007" → "7"), preserving single "0"
+  const trimmedInt = intPart.replace(/^0+(?=\d)/, "");
+  const formattedInt = trimmedInt
+    ? trimmedInt.replace(/\B(?=(\d{3})+(?!\d))/g, ".")
     : "";
 
   return decPart !== null ? `${formattedInt},${decPart}` : formattedInt;
