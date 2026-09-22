@@ -10,12 +10,19 @@ const PDFDownloadLink = dynamic(
   { ssr: false, loading: () => null }
 );
 
-// Import PDF primitives lazily too
-import { Document, Page, Text, View, StyleSheet } from "@react-pdf/renderer";
+import { Document, Page, Text, View, StyleSheet, Font } from "@react-pdf/renderer";
+
+Font.register({
+  family: "Roboto",
+  fonts: [
+    { src: "/fonts/Roboto-Regular.ttf", fontWeight: "normal" },
+    { src: "/fonts/Roboto-Bold.ttf", fontWeight: "bold" },
+  ],
+});
 
 const styles = StyleSheet.create({
   page: {
-    fontFamily: "Helvetica",
+    fontFamily: "Roboto",
     fontSize: 10,
     padding: 32,
     backgroundColor: "#FFFFFF",

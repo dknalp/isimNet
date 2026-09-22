@@ -34,7 +34,7 @@ src/
   app/
     api/
       auth/[...nextauth]/  # NextAuth route handler
-      sync/                # Google Drive senkronizasyon (POST: kaydet)
+      sync/                # GitHub senkronizasyon (GET: oku, POST: yaz)
     dashboard/             # Ana ekran — modül kartları
     dashboard/musteriler/  # Müşteri listesi + [id] detay
     dashboard/urunler/     # Ürün listesi + [id] detay
@@ -42,6 +42,7 @@ src/
     dashboard/senkronizasyon/  # Manuel sync / veri yönetimi
   components/
     musteriler/            # Müşteri bileşenleri (modaller, kartlar, feed)
+      SaleReceiptPDF.tsx   # @react-pdf/renderer — SSR yok, dynamic import zorunlu
     urunler/               # Ürün bileşenleri (modaller, kartlar)
     ui/                    # Paylaşılan UI (CurrencyInput vb.)
     Header.tsx / MenuCard.tsx / SignInButton.tsx
