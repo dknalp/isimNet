@@ -296,12 +296,12 @@ export default function SenkronizasyonPage() {
 
         {/* Primary action */}
         <button
-          onClick={handleSync}
-          disabled={isSyncing || isRestoring}
+          onClick={handleBackupToGitHub}
+          disabled={isBackingUp || isRestoring}
           className="w-full py-4 rounded-2xl text-white font-semibold text-base flex items-center justify-center gap-2.5 transition-opacity disabled:opacity-60"
           style={{ background: "#4F46E5" }}
         >
-          {isSyncing ? (
+          {isBackingUp ? (
             <>
               <svg className="w-5 h-5 animate-spin" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
                 <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
