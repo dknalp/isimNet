@@ -172,6 +172,7 @@ export function DataProvider({ children }: { children: React.ReactNode }) {
   // P1-FIX: track timestamp of last mutation to detect offline edits on remount
   // Initialized to 0; the real persisted value is loaded in mount useEffect once session.userId is known
   const lastMutationAt = useRef<number>(0);
+  const githubShaRef   = useRef<string | null>(null);
 
   // ── Mutation helpers: write localStorage + increment dirty counter ─────────
   function markMutation() {
@@ -819,13 +820,15 @@ export function DataProvider({ children }: { children: React.ReactNode }) {
       const res = await fetch("/api/backup", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ customers, products, sales, payments, debts }),
+        body: JSON.stringify({ customers, products, sales, payments, debts, sha: githubShaRef.current }),
       });
       if (!res.ok) {
         const txt = await res.text().catch(() => "");
         setSyncError(`GitHub yedekleme başarısız (HTTP ${res.status}): ${txt}`);
         LOG.error("backupToGitHub: failed", { status: res.status });
       } else {
+        const json = await res.json().catch(() => ({}));
+        if (typeof json.sha === "string") githubShaRef.current = json.sha;
         const now = new Date();
         setLastSyncTime(now);
         try { localStorage.setItem(lsRef.current.lastSync, now.toISOString()); } catch { /* */ }
@@ -851,6 +854,8 @@ export function DataProvider({ children }: { children: React.ReactNode }) {
         LOG.error("restoreFromGitHub: failed", { status: res.status });
         return;
       }
+      const json = await res.json().catch(() => ({}));
+      if (typeof json.sha === "string") githubShaRef.current = json.sha;
       // Backup route wrote data to local DB — now reload from local DB
       await restoreFromDrive();
       LOG.sync("restoreFromGitHub: restored and reloaded from local DB");

@@ -26,13 +26,14 @@ export async function GET() {
   }
 
   try {
-    const { data } = await readOrMigrateDataFile(session.userId);
+    const { data, sha } = await readOrMigrateDataFile(session.userId);
     if (!data) {
       return NextResponse.json({ error: "No GitHub backup found" }, { status: 404 });
     }
     await writeLocalData(session.userId, data);
     return NextResponse.json({
       ok: true,
+      sha,
       counts: {
         customers: data.customers.length,
         products:  data.products.length,
