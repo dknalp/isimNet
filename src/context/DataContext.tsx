@@ -116,8 +116,6 @@ interface DataContextValue {
   backupToGitHub:    () => Promise<void>;
   restoreFromGitHub: () => Promise<void>;
 
-  canUndo:        boolean;
-  undoLastAction: () => void;
 }
 
 const DataContext = createContext<DataContextValue | null>(null);
@@ -141,17 +139,6 @@ export function DataProvider({ children }: { children: React.ReactNode }) {
   const [isDirty,      setIsDirty]      = useState(false);
   const [pendingSyncTick, setPendingSyncTick] = useState(0);
 
-  // ── Undo buffer ─────────────────────────────────────────────────────────
-  type UndoSnapshot = {
-    customers: Customer[];
-    products:  Product[];
-    sales:     Sale[];
-    payments:  Payment[];
-    debts:     Debt[];
-  };
-  const lastUndoRef  = useRef<UndoSnapshot | null>(null);
-  const undoTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const [canUndo, setCanUndo] = useState(false);
 
   const stateRef = useRef({ customers, products, sales, payments, debts });
   stateRef.current = { customers, products, sales, payments, debts };
@@ -524,45 +511,8 @@ export function DataProvider({ children }: { children: React.ReactNode }) {
     setC(prev => prev.map(c => c.id === id ? { ...c, ...data, updatedAt: new Date().toISOString() } : c));
   }, [setC]);
 
-  const captureUndo = useCallback(() => {
-    if (undoTimerRef.current) clearTimeout(undoTimerRef.current);
-    lastUndoRef.current = {
-      customers, products, sales, payments, debts,
-    };
-    setCanUndo(true);
-    undoTimerRef.current = setTimeout(() => {
-      lastUndoRef.current = null;
-      setCanUndo(false);
-    }, 5000);
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [customers, products, sales, payments, debts]);
-
-  const undoLastAction = useCallback(() => {
-    const snap = lastUndoRef.current;
-    if (!snap) return;
-    if (undoTimerRef.current) clearTimeout(undoTimerRef.current);
-    lastUndoRef.current = null;
-    setCanUndo(false);
-    LOG.warn("undoLastAction: restoring snapshot", {
-      customers: snap.customers.length, products: snap.products.length,
-      sales: snap.sales.length, payments: snap.payments.length, debts: snap.debts.length,
-    });
-    setCustomers(snap.customers);
-    setProducts(snap.products);
-    setSales(snap.sales);
-    setPayments(snap.payments);
-    setDebts(snap.debts);
-    lsWrite(lsRef.current.customers, snap.customers);
-    lsWrite(lsRef.current.products,  snap.products);
-    lsWrite(lsRef.current.sales,     snap.sales);
-    lsWrite(lsRef.current.payments,  snap.payments);
-    lsWrite(lsRef.current.debts,     snap.debts);
-    markMutation();
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
 
   const deleteCustomer = useCallback((id: string) => {
-    captureUndo();
     LOG.info("deleteCustomer", { id });
     // Restore product stock for every sale belonging to this customer before deleting
     const now = new Date().toISOString();
@@ -600,7 +550,6 @@ export function DataProvider({ children }: { children: React.ReactNode }) {
   }, [setP]);
 
   const deleteProduct = useCallback((id: string) => {
-    captureUndo();
     LOG.info("deleteProduct", { id });
     setP(prev => prev.filter(p => p.id !== id));
   }, [setP]);
@@ -637,7 +586,6 @@ export function DataProvider({ children }: { children: React.ReactNode }) {
   }, [setS, setP]);
 
   const deleteSale = useCallback((id: string) => {
-    captureUndo();
     const sale = stateRef.current.sales.find(s => s.id === id);
     if (sale) {
       LOG.info("deleteSale: restoring stock", { id });
@@ -664,7 +612,6 @@ export function DataProvider({ children }: { children: React.ReactNode }) {
   }, [setPay]);
 
   const deletePayment = useCallback((id: string) => {
-    captureUndo();
     LOG.info("deletePayment", { id });
     setPay(prev => prev.filter(p => p.id !== id));
   }, [setPay]);
@@ -682,7 +629,6 @@ export function DataProvider({ children }: { children: React.ReactNode }) {
   }, [setD]);
 
   const deleteDebt = useCallback((id: string) => {
-    captureUndo();
     LOG.info("deleteDebt", { id });
     setD(prev => prev.filter(d => d.id !== id));
   }, [setD]);
@@ -867,8 +813,16 @@ export function DataProvider({ children }: { children: React.ReactNode }) {
     }
   }, [restoreFromDrive]);
 
+  // ── Periodic GitHub backup every 5 minutes ───────────────────────────────
+  useEffect(() => {
+    if (status !== "authenticated") return;
+    const id = setInterval(() => {
+      void backupToGitHub();
+    }, 5 * 60 * 1000);
+    return () => clearInterval(id);
+  }, [status, backupToGitHub]);
+
   const importFromFile = useCallback(async (raw: AppData) => {
-    captureUndo();
     setCustomers(raw.customers);   lsWrite(lsRef.current.customers, raw.customers);
     setProducts(raw.products);     lsWrite(lsRef.current.products,  raw.products);
     setSales(raw.sales);           lsWrite(lsRef.current.sales,     raw.sales);
@@ -876,8 +830,7 @@ export function DataProvider({ children }: { children: React.ReactNode }) {
     setDebts(raw.debts);           lsWrite(lsRef.current.debts,     raw.debts);
     setIsDirty(true);
     await syncToDrive();
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [captureUndo, syncToDrive]);
+  }, [syncToDrive]);
 
 
   const value = useMemo<DataContextValue>(() => ({
@@ -892,8 +845,7 @@ export function DataProvider({ children }: { children: React.ReactNode }) {
     isDirty,
     syncToDrive, restoreFromDrive, clearAllData,
     backupToGitHub, restoreFromGitHub,
-    importFromFile,
-    canUndo, undoLastAction,
+    importFromFile
   }), [
     customers, products, sales, payments, debts,
     isLoading, isSyncing, lastSyncTime, syncError,
@@ -906,8 +858,7 @@ export function DataProvider({ children }: { children: React.ReactNode }) {
     isDirty,
     syncToDrive, restoreFromDrive, clearAllData,
     backupToGitHub, restoreFromGitHub,
-    importFromFile,
-    canUndo, undoLastAction,
+    importFromFile
   ]);
 
   return <DataContext.Provider value={value}>{children}</DataContext.Provider>;

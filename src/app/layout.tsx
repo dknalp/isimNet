@@ -3,7 +3,6 @@ import { Geist, Geist_Mono } from "next/font/google";
 import { SessionProvider } from "next-auth/react";
 import { DataProvider } from "@/context/DataContext";
 import "./globals.css";
-import UndoToast from "@/components/ui/UndoToast";
 
 const geistSans = Geist({
   variable: "--font-geist-sans",
@@ -48,7 +47,6 @@ export default function RootLayout({
         <SessionProvider>
           <DataProvider>
             {children}
-            <UndoToast />
           </DataProvider>
         </SessionProvider>
       </body>
