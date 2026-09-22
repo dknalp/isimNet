@@ -5,20 +5,30 @@ import { formatCurrency } from "@/lib/format";
 import { parseCurrencyDisplay } from "@/lib/currencyInput";
 import CurrencyInput from "@/components/ui/CurrencyInput";
 
+type PaymentMethod = "nakit" | "cek" | "havale" | "kredi_karti";
+
 interface NewPaymentModalProps {
   open: boolean;
   onClose: () => void;
-  onSubmit: (data: { amount: number; description: string }) => void;
+  onSubmit: (data: { amount: number; description: string; method: PaymentMethod }) => void;
   maxAmount?: number;
 }
+
+const METHODS: { key: PaymentMethod; label: string }[] = [
+  { key: "nakit", label: "Nakit" },
+  { key: "cek", label: "Çek" },
+  { key: "havale", label: "Havale" },
+  { key: "kredi_karti", label: "Krt." },
+];
 
 export default function NewPaymentModal({ open, onClose, onSubmit, maxAmount }: NewPaymentModalProps) {
   const [amountDisplay, setAmountDisplay] = useState("");
   const [description, setDescription] = useState("");
+  const [method, setMethod] = useState<PaymentMethod>("nakit");
   const [error, setError] = useState("");
 
   useEffect(() => {
-    if (open) { setAmountDisplay(""); setDescription(""); setError(""); }
+    if (open) { setAmountDisplay(""); setDescription(""); setMethod("nakit"); setError(""); }
     document.body.style.overflow = open ? "hidden" : "";
     return () => { document.body.style.overflow = ""; };
   }, [open]);
@@ -31,9 +41,10 @@ export default function NewPaymentModal({ open, onClose, onSubmit, maxAmount }: 
   function handleSubmit() {
     if (numAmount <= 0) { setError("Geçerli tutar giriniz"); return; }
     setError("");
-    onSubmit({ amount: numAmount, description: description.trim() });
+    onSubmit({ amount: numAmount, description: description.trim(), method });
     setAmountDisplay("");
     setDescription("");
+    setMethod("nakit");
     onClose();
   }
 
@@ -61,7 +72,26 @@ export default function NewPaymentModal({ open, onClose, onSubmit, maxAmount }: 
               </p>
             )}
           </div>
-          <input type="text" placeholder="Açıklama (opsiyonel, örn. Nakit ödeme)"
+
+          {/* Ödeme yöntemi */}
+          <div className="flex gap-2">
+            {METHODS.map((m) => (
+              <button
+                key={m.key}
+                type="button"
+                onClick={() => setMethod(m.key)}
+                className={`flex-1 py-2 rounded-xl text-sm font-medium border transition-all ${
+                  method === m.key
+                    ? "bg-green-600 text-white border-green-600"
+                    : "bg-gray-50 text-gray-600 border-gray-200"
+                }`}
+              >
+                {m.label}
+              </button>
+            ))}
+          </div>
+
+          <input type="text" placeholder="Açıklama (opsiyonel)"
             value={description} onChange={(e) => setDescription(e.target.value)}
             className={inputClass} />
         </div>

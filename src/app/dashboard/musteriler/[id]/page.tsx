@@ -52,7 +52,7 @@ export default function MusteriDetayPage({
     addSale({ ...data, customerId: id });
   }
 
-  function handleAddPayment(data: { amount: number; description: string }) {
+  function handleAddPayment(data: { amount: number; description: string; method: "nakit" | "cek" | "havale" | "kredi_karti" }) {
     addPayment({ ...data, customerId: id, date: new Date().toISOString() });
   }
 

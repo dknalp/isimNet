@@ -31,6 +31,7 @@ export interface Payment {
   date: string;
   amount: number;
   description: string;
+  method?: "nakit" | "cek" | "havale" | "kredi_karti";
 }
 
 export interface Debt {

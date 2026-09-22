@@ -4,8 +4,10 @@ import { useState } from "react";
 import { BsDatabaseFillDash } from "react-icons/bs";
 import { ActivityItem, Sale, Payment, Debt, Customer } from "@/lib/customers";
 import SaleReceiptDownloadButton from "./SaleReceiptPDF";
+import PaymentReceiptDownloadButton from "./PaymentReceiptPDF";
 import { formatCurrency } from "@/lib/format";
 import { useData } from "@/context/DataContext";
+import { useSession } from "next-auth/react";
 
 interface ActivityFeedItemProps {
   item: ActivityItem;
@@ -27,6 +29,7 @@ export default function ActivityFeedItem({ item, onEdit, customer }: ActivityFee
   const [isOpen, setIsOpen] = useState(false);
   const [confirmDelete, setConfirmDelete] = useState(false);
   const { deleteSale, deletePayment, deleteDebt } = useData();
+  const { data: session } = useSession();
 
   const isSale    = item.type === "sale";
   const isPayment = item.type === "payment";
@@ -179,6 +182,15 @@ export default function ActivityFeedItem({ item, onEdit, customer }: ActivityFee
                 {isSale && sale && customer && (
                   <span onClick={(e) => e.stopPropagation()}>
                     <SaleReceiptDownloadButton sale={sale} customer={customer} />
+                  </span>
+                )}
+                {isPayment && payment && customer && (
+                  <span onClick={(e) => e.stopPropagation()}>
+                    <PaymentReceiptDownloadButton
+                      payment={payment}
+                      customer={customer}
+                      userName={session?.user?.name ?? "İşimNet"}
+                    />
                   </span>
                 )}
                 <button
